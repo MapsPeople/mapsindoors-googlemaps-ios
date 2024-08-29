@@ -9,7 +9,6 @@
 import Foundation
 import MapsIndoorsCore
 import GoogleMaps
-import ValueAnimator
 
 extension BinaryFloatingPoint {
     var degrees: Self {
