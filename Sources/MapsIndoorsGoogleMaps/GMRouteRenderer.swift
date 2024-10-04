@@ -105,7 +105,7 @@ class GMRouteRenderer: MPRouteRenderer {
                                                                            if distance + nextDistance > stopDistance {
                                                                                nextDistance = stopDistance - distance
                                                                                let bearing = MPGeometryUtils.bearingBetweenPoints(from: lastPoint, to: nextPoint)
-                                                                               let computedPoint = computeOffset(from: lastPoint, dist: nextDistance, head: bearing)
+                                                                               let computedPoint = self.computeOffset(from: lastPoint, dist: nextDistance, head: bearing)
                                                                                points.append(computedPoint)
                                                                                break
                                                                            } else {
@@ -137,7 +137,7 @@ class GMRouteRenderer: MPRouteRenderer {
                                                                    }
                                                                }
                                                            }, option: ValueAnimator.OptionBuilder().setDelay(0.1).setRepeatInfinitely(repeating).build())
-                self.valueAnimator?.callbackOnMainThread = false
+                self.valueAnimator?.callbackOnMainThread = true
                 self.valueAnimator?.resume()
             }
             DispatchQueue.main.async { [weak self] in
