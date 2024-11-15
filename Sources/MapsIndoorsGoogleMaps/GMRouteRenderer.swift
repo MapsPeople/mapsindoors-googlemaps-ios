@@ -105,7 +105,7 @@ class GMRouteRenderer: MPRouteRenderer {
                                                                            if distance + nextDistance > stopDistance {
                                                                                nextDistance = stopDistance - distance
                                                                                let bearing = MPGeometryUtils.bearingBetweenPoints(from: lastPoint, to: nextPoint)
-                                                                               let computedPoint = self.computeOffset(from: lastPoint, dist: nextDistance, head: bearing)
+                                                                               let computedPoint = computeOffset(from: lastPoint, dist: nextDistance, head: bearing)
                                                                                points.append(computedPoint)
                                                                                break
                                                                            } else {
