@@ -628,8 +628,25 @@ class ViewState {
             if model2DState.isVisible || model2DState == .UNDEFINED {
                 if let bundle = newModel.model2DBundle {
                     if let image = bundle.icon {
-                        model2DImage = image
+                        let zoom = Int(map.camera.zoom)
+                        let scaleFactor = switch zoom {
+                            case 21: 1.0
+                            case 20: 0.9
+                            case 19: 0.6
+                            case 18: 0.4
+                            case 17: 0.2
+                            default:
+                                0.1
+                        }
+                        
+                        let newMaxDimension = max(image.size.width, image.size.height) * CGFloat(scaleFactor)
+                        
+                        let scaledImage = image.downSize(to: newMaxDimension)
+                        
+                        model2DImage = scaledImage
+
                     }
+                    
                     model2dBundle = bundle
                     model2DWidthMeters = bundle.widthMeters
                     model2DHeightMeters = bundle.heightMeters
