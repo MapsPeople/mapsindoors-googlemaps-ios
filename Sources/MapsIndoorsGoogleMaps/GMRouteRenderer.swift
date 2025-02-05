@@ -153,7 +153,7 @@ class GMRouteRenderer: MPRouteRenderer {
         }
     }
 
-    func moveCamera(points path: [CLLocationCoordinate2D], animate _: Bool, durationMs _: Int, tilt: Float, fitMode: MPCameraViewFitMode, padding: UIEdgeInsets, maxZoom: Double?) {
+    func moveCamera(points path: [CLLocationCoordinate2D], animate _: Bool, durationMs _: Int, tilt: Float, fitMode: MPCameraViewFitMode, padding: UIEdgeInsets, maxZoom _: Double?) {
         guard let map, path.count >= 2 else { return }
 
         let bounds = MPGeoBounds(points: path)
