@@ -1,6 +1,6 @@
 import Foundation
 import GoogleMaps
-import MapsIndoorsCore
+@_spi(Private) import MapsIndoorsCore
 
 extension BinaryFloatingPoint {
     var degrees: Self {
@@ -298,12 +298,14 @@ class GMRouteRenderer: MPRouteRenderer {
     // Helper methods
     private func renderMarker(model: (any MPViewModel)?, type: MarkerType) {
         guard let model else { return }
-        Task { @MainActor in
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+
             let s = await ViewState(viewModel: model, map: self.map!, is2dModelEnabled: false, isFloorPlanEnabled: false)
-            s.computeDelta(newModel: model)
+            await s.computeDelta(newModel: model)
             await s.applyDelta()
-            s.marker.userData = model.id
-            s.marker.zIndex = type == .start ? Int32(MapOverlayZIndex.startMarkerOverlay.rawValue) : Int32(MapOverlayZIndex.endMarkerOverlay.rawValue)
+            s.marker.value?.userData = model.id
+            s.marker.value?.zIndex = type == .start ? Int32(MapOverlayZIndex.startMarkerOverlay.rawValue) : Int32(MapOverlayZIndex.endMarkerOverlay.rawValue)
             self.views.append(s)
         }
     }
