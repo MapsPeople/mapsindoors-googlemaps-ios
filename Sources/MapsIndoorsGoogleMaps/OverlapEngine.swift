@@ -38,7 +38,7 @@ class OverlapEngine {
     func computeDeltas() async {
         guard policy != .allowOverLap else { return }
         // Sort by poi area size, (smallest first), so we process in order of area size from smallest to largest
-        views = views.sorted(by: { a, b in a.poiArea.value < b.poiArea.value })
+        views = views.sorted(by: { a, b in a.poiArea < b.poiArea })
 
         _ = await withTaskGroup(of: Bool.self) { group -> Bool in
             for view in views {
@@ -46,7 +46,7 @@ class OverlapEngine {
                     if let current = self.entries[view.id], self.visited[view.id] == nil, let bounds = await current.bounds, let tree = await self.tree {
                         let collisions = tree.elements(inBoundingRectMin: bounds.0, rectMax: bounds.1)
                         for hit in collisions {
-                            guard hit != current, self.visited[hit.id] == nil, await current.viewState.markerState.isVisible, await hit.viewState.markerState.isVisible else { continue }
+                            guard hit != current, self.visited[hit.id] == nil, current.viewState.markerState.isVisible, hit.viewState.markerState.isVisible else { continue }
                             let (winner, loser) = self.decideCollision(a: current, b: hit)
                             await self.resolveCollision(winnerEntry: winner, loserEntry: loser, overlapPolicy: self.policy)
                         }
@@ -67,26 +67,26 @@ class OverlapEngine {
      If a viewstate is "selected", it should always be the winner!
      */
     private func decideCollision(a: Entry, b: Entry) -> (Entry, Entry) {
-        if a.viewState.forceRender.value { return (a, b) }
-        if b.viewState.forceRender.value { return (b, a) }
+        if a.viewState.forceRender { return (a, b) }
+        if b.viewState.forceRender { return (b, a) }
 
         // 1. Compare based on poiArea size
-        if a.viewState.poiArea.value != b.viewState.poiArea.value {
-            return a.viewState.poiArea.value < b.viewState.poiArea.value ? (a, b) : (b, a)
+        if a.viewState.poiArea != b.viewState.poiArea {
+            return a.viewState.poiArea < b.viewState.poiArea ? (a, b) : (b, a)
         }
 
         // 2. Compare based on name - alphabetically
-        if a.viewState.poiArea.value == b.viewState.poiArea.value {
-            let aName = a.viewState.infoWindowText.value ?? ""
-            let bName = b.viewState.infoWindowText.value ?? ""
+        if a.viewState.poiArea == b.viewState.poiArea {
+            let aName = a.viewState.infoWindowText ?? ""
+            let bName = b.viewState.infoWindowText ?? ""
             if aName != bName {
                 return aName < bName ? (a, b) : (b, a)
             }
         }
 
         // 3. Compare based on longtitude
-        let aLongitude = a.viewState.markerPositionShadow.value?.longitude ?? -Double.infinity
-        let bLongitude = b.viewState.markerPositionShadow.value?.longitude ?? -Double.infinity
+        let aLongitude = a.viewState.markerPosition?.longitude ?? -Double.infinity
+        let bLongitude = b.viewState.markerPosition?.longitude ?? -Double.infinity
 
         return aLongitude > bLongitude ? (a, b) : (b, a)
     }
@@ -107,7 +107,7 @@ class OverlapEngine {
         case .removeLabelFirst:
             await removeLabelFirst(winnerState: winnerEntry.viewState, loserState: loserEntry.viewState)
         case .removeIconAndLabel:
-            await removeIconAndLabel(winnerState: winnerEntry.viewState, loserState: loserEntry.viewState)
+            removeIconAndLabel(winnerState: winnerEntry.viewState, loserState: loserEntry.viewState)
         default:
             break
         }
@@ -116,9 +116,9 @@ class OverlapEngine {
         await tree?.addEntry(entry: loserEntry)
     }
 
-    private func removeIconAndLabel(winnerState _: ViewState, loserState: ViewState) async {
-        if !loserState.forceRender.value {
-            await loserState.setMarkerState(state: .INVISIBLE)
+    private func removeIconAndLabel(winnerState _: ViewState, loserState: ViewState) {
+        if !loserState.forceRender {
+            loserState.markerState = .INVISIBLE
         }
     }
 
@@ -128,16 +128,16 @@ class OverlapEngine {
     private func removeIconFirst(winnerState: ViewState, loserState: ViewState) async {
         var winner = await winnerState.bounds ?? CGRect(x: -1000, y: -1000, width: 1, height: 1)
         var loser = await loserState.bounds ?? CGRect(x: -2000, y: -2000, width: 1, height: 1)
-        let winnerHasLabel = await winnerState.markerState.isLabelVisible
-        let winnerHasIcon = await winnerState.markerState.isIconVisible
-        let loserHasLabel = await loserState.markerState.isLabelVisible
-        var loserHasIcon = await loserState.markerState.isIconVisible
+        let winnerHasLabel = winnerState.markerState.isLabelVisible
+        let winnerHasIcon = winnerState.markerState.isIconVisible
+        let loserHasLabel = loserState.markerState.isLabelVisible
+        var loserHasIcon = loserState.markerState.isIconVisible
 
-        if loserHasIcon, !loserState.forceRender.value {
+        if loserHasIcon, !loserState.forceRender {
             if loserHasLabel, winnerHasLabel {
-                loserState.markerStateShadow.value = .VISIBLE_LABEL
+                loserState.markerState = .VISIBLE_LABEL
             } else {
-                loserState.markerStateShadow.value = .INVISIBLE
+                loserState.markerState = .INVISIBLE
                 return
             }
         }
@@ -145,15 +145,15 @@ class OverlapEngine {
         loser = await loserState.bounds ?? CGRect(x: -2000, y: -2000, width: 1, height: 1)
 
         if winner.intersects(loser) {
-            loserHasIcon = await loserState.markerState.isIconVisible
+            loserHasIcon = loserState.markerState.isIconVisible
 
-            if winnerHasIcon, !winnerState.forceRender.value {
-                winnerState.markerStateShadow.value = .VISIBLE_LABEL
+            if winnerHasIcon, !winnerState.forceRender {
+                winnerState.markerState = .VISIBLE_LABEL
             }
 
             winner = await winnerState.bounds ?? CGRect(x: -1000, y: -1000, width: 1, height: 1)
-            if winner.intersects(loser), !loserState.forceRender.value {
-                loserState.markerStateShadow.value = .INVISIBLE
+            if winner.intersects(loser), !loserState.forceRender {
+                loserState.markerState = .INVISIBLE
             }
         }
     }
@@ -164,16 +164,16 @@ class OverlapEngine {
     private func removeLabelFirst(winnerState: ViewState, loserState: ViewState) async {
         var winner = await winnerState.bounds ?? CGRect(x: -1000, y: -1000, width: 1, height: 1)
         var loser = await loserState.bounds ?? CGRect(x: -2000, y: -2000, width: 1, height: 1)
-        let winnerHasLabel = await winnerState.markerState.isLabelVisible
-        let winnerHasIcon = await winnerState.markerState.isIconVisible
-        var loserHasLabel = await loserState.markerState.isLabelVisible
-        let loserHasIcon = await loserState.markerState.isIconVisible
+        let winnerHasLabel = winnerState.markerState.isLabelVisible
+        let winnerHasIcon = winnerState.markerState.isIconVisible
+        var loserHasLabel = loserState.markerState.isLabelVisible
+        let loserHasIcon = loserState.markerState.isIconVisible
 
-        if loserHasLabel, !loserState.forceRender.value {
+        if loserHasLabel, !loserState.forceRender {
             if loserHasIcon, winnerHasIcon {
-                loserState.markerStateShadow.value = .VISIBLE_ICON
+                loserState.markerState = .VISIBLE_ICON
             } else {
-                loserState.markerStateShadow.value = .INVISIBLE
+                loserState.markerState = .INVISIBLE
                 return
             }
         }
@@ -181,15 +181,15 @@ class OverlapEngine {
         loser = await loserState.bounds ?? CGRect(x: -2000, y: -2000, width: 1, height: 1)
 
         if winner.intersects(loser) {
-            loserHasLabel = await loserState.markerState.isLabelVisible
+            loserHasLabel = loserState.markerState.isLabelVisible
 
-            if winnerHasLabel, !winnerState.forceRender.value {
-                winnerState.markerStateShadow.value = .VISIBLE_ICON
+            if winnerHasLabel, !winnerState.forceRender {
+                winnerState.markerState = .VISIBLE_ICON
             }
 
             winner = await winnerState.bounds ?? CGRect(x: -1000, y: -1000, width: 1, height: 1)
-            if winner.intersects(loser), !loserState.forceRender.value {
-                loserState.markerStateShadow.value = .INVISIBLE
+            if winner.intersects(loser), !loserState.forceRender {
+                loserState.markerState = .INVISIBLE
             }
         }
     }

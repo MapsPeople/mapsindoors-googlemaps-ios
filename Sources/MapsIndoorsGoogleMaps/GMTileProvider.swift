@@ -12,11 +12,11 @@ class GMTileProvider: GMSTileLayer {
     var _tileProvider: MPTileProvider
 
     override func requestTileFor(x: UInt, y: UInt, zoom: UInt, receiver: GMSTileReceiver) {
-        let r = receiver
-        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
-            guard let self else { return }
+        DispatchQueue.global(qos: .userInteractive).async {
             let tile = self._tileProvider.getTile(x: x, y: y, zoom: zoom)
-                r.receiveTileWith(x: x, y: y, zoom: zoom, image: tile)
+            DispatchQueue.main.async {
+                receiver.receiveTileWith(x: x, y: y, zoom: zoom, image: tile)
+            }
         }
     }
 }

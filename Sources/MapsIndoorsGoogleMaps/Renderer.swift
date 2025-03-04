@@ -16,38 +16,29 @@ class Renderer {
     // Keeping track of active view states (things in view)
     @MainActor private var views = [String: ViewState]()
 
-    func setViewModels(models: [any MPViewModel], collision: MPCollisionHandling, forceClear: Bool) async throws {
-        try Task.checkCancellation()
-        
-        let ids = models.map(\.id)
-        let newSet = Set<String>(ids)
-        let oldSet = await Set<String>(self.views.keys)
-        let noLongerInView = oldSet.subtracting(newSet)
-        
-        try Task.checkCancellation()
+    func setViewModels(models: [any MPViewModel], collision: MPCollisionHandling, forceClear: Bool) {
+        Task.detached(priority: .userInitiated) {
+            let ids = models.map(\.id)
+            let newSet = Set<String>(ids)
+            let oldSet = await Set<String>(self.views.keys)
+            let noLongerInView = oldSet.subtracting(newSet)
 
-        // Compute which view state instances are in view
-        var viewStatesInView = [ViewState]()
-        viewStatesInView.reserveCapacity(ids.count)
-        for modelId in ids {
-            if let viewState = await self.views[modelId] {
-                viewStatesInView.append(viewState)
+            // Compute which view state instances are in view
+            var viewStatesInView = [ViewState]()
+            viewStatesInView.reserveCapacity(ids.count)
+            for modelId in ids {
+                if let viewState = await self.views[modelId] {
+                    viewStatesInView.append(viewState)
+                }
             }
-        }
-        
-        try Task.checkCancellation()
 
-        if let projection = await self.stage0AcquireProjection() {
-            try Task.checkCancellation()
-            await self.stage1PurgeViewStates(noLongerInView: noLongerInView, forceClear: forceClear)
-            try Task.checkCancellation()
-            await self.stage2ComputeDeltas(models: models)
-            try Task.checkCancellation()
-            let viewStatesInView = await self.computeViewStatesInView(ids: ids)
-            try Task.checkCancellation()
-            await self.stage3OverlapDetection(collision: collision, projection: projection, inView: viewStatesInView)
-            try Task.checkCancellation()
-            await self.stage4ApplyDeltas(inView: viewStatesInView)
+            if let projection = await self.stage0AcquireProjection() {
+                await self.stage1PurgeViewStates(noLongerInView: noLongerInView, forceClear: forceClear)
+                await self.stage2ComputeDeltas(models: models)
+                let viewStatesInView = await self.computeViewStatesInView(ids: ids)
+                await self.stage3OverlapDetection(collision: collision, projection: projection, inView: viewStatesInView)
+                await self.stage4ApplyDeltas(inView: viewStatesInView)
+            }
         }
     }
 
@@ -69,7 +60,7 @@ class Renderer {
             let timeLimitSec = 10.0
             let viewsLimit = 250
             let noOfActiveViewStates = views.count
-            let timeSinceLastViewed = await currentTime - (views[id]?.lastTimeTag ?? 0)
+            let timeSinceLastViewed = currentTime - (views[id]?.lastTimeTag ?? 0)
 
             if timeSinceLastViewed > timeLimitSec || noOfActiveViewStates > viewsLimit || forceClear {
                 if let view = views[id] {
@@ -89,13 +80,13 @@ class Renderer {
                 _ = group.addTaskUnlessCancelled(priority: .high) {
                     // Compute delta between view state and view model, if one exists
                     if let view = await self.views[model.id] {
-                        await view.computeDelta(newModel: model)
+                        view.computeDelta(newModel: model)
                     } else {
                         // Otherwise, create view state
                         let view = await self.initViewState(viewModel: model, map: map)
-                        await view.computeDelta(newModel: model)
-                        Task { @MainActor [weak self] in
-                            self?.views[model.id] = view
+                        view.computeDelta(newModel: model)
+                        Task { @MainActor in
+                            self.views[model.id] = view
                         }
                     }
                 }

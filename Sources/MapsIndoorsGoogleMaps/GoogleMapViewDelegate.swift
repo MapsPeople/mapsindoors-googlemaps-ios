@@ -104,8 +104,8 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
             }
         }
 
-        if let id = marker.userData as? String {
-            let _ = mapsIndoorsDelegate?.didTapInfoWindowOf(locationId: id)
+        if let viewState = marker.userData as? ViewState {
+            let _ = mapsIndoorsDelegate?.didTapInfoWindowOf(locationId: viewState.id)
         }
     }
 
@@ -335,8 +335,8 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
         }
 
         var res: UIView?
-        if let id = marker.userData as? String {
-            if let location = MPMapsIndoors.shared.locationWith(locationId: id) {
+        if let viewState = marker.userData as? ViewState {
+            if let location = MPMapsIndoors.shared.locationWith(locationId: viewState.id) {
                 res = map.customInfoWindow?.infoWindowFor(location: location)
             }
         }
@@ -346,12 +346,12 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
 
 private extension GMSMarker {
     @objc override var locationId: String {
-        (userData as? String) ?? ""
+        (userData as? ViewState)?.id ?? ""
     }
 }
 
 private extension GMSOverlay {
     @objc var locationId: String {
-        (userData as? String) ?? ""
+        (userData as? ViewState)?.id ?? ""
     }
 }

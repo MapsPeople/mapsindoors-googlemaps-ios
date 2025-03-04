@@ -90,9 +90,7 @@ public class GoogleMapProvider: MPMapProvider {
 
     public func setViewModels(models: [any MPViewModel], forceClear: Bool) async {
         configureMapsIndoorsModuleLicensing()
-        do {
-            try await renderer?.setViewModels(models: models, collision: collisionHandling, forceClear: forceClear)
-        } catch { /* do nothing */ }
+        renderer?.setViewModels(models: models, collision: collisionHandling, forceClear: forceClear)
     }
 
     public var view: UIView? {
