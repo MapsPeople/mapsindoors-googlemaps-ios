@@ -93,19 +93,19 @@ actor ViewState {
     var lastTimeTag = CFAbsoluteTimeGetCurrent()
 
     // This is a dictionary because state operations are idempotent so we only ever need to execute one
-    private nonisolated let deltaOperations = Locked<[StateOperation: (GMSMapView?) -> Void]>(value: [:])
+    private nonisolated let deltaOperations = LockedObject<[StateOperation: (GMSMapView?) -> Void]>(value: [:])
 
-    nonisolated let marker = Locked<GMSMarker?>(value: nil)
-    private nonisolated let polygons = Locked<[GMSPolygon]>(value: [])
-    private nonisolated let floorPlanPolygons = Locked<[GMSPolygon]>(value: [])
-    private nonisolated let overlay2D = Locked<GMSGroundOverlay?>(value: nil)
-    private nonisolated let InfoWindowAnchorPoint = Locked<CGPoint?>(value: nil)
+    nonisolated let marker = LockedObject<GMSMarker?>(value: nil)
+    private nonisolated let polygons = LockedObject<[GMSPolygon]>(value: [])
+    private nonisolated let floorPlanPolygons = LockedObject<[GMSPolygon]>(value: [])
+    private nonisolated let overlay2D = LockedObject<GMSGroundOverlay?>(value: nil)
+    private nonisolated let InfoWindowAnchorPoint = LockedObject<CGPoint?>(value: nil)
 
     private var is2dModelsEnabled = false
 
     private var isFloorPlanEnabled = false
 
-    nonisolated let shouldShowInfoWindowShadow = Locked<Bool>(value: false)
+    nonisolated let shouldShowInfoWindowShadow = LockedObject<Bool>(value: false)
     var shouldShowInfoWindow: Bool = false {
         didSet {
             shouldShowInfoWindowShadow.value = shouldShowInfoWindow
@@ -128,15 +128,15 @@ actor ViewState {
     }
 
     // Area of the underlying MapsIndoors Geometry (not necessarily related to the rendered geometry)
-    nonisolated let poiArea = Locked<Double>(value: 0.0)
+    nonisolated let poiArea = LockedObject<Double>(value: 0.0)
 
     private var imageBundle: IconLabelBundle?
     private var model2dBundle: Model2DBundle?
 
     // Enables forced rendering (for selection & highlight) - collision logic checks this flag
-    nonisolated let forceRender = Locked<Bool>(value: false)
+    nonisolated let forceRender = LockedObject<Bool>(value: false)
 
-    nonisolated let infoWindowText = Locked<String?>(value: nil)
+    nonisolated let infoWindowText = LockedObject<String?>(value: nil)
 
     // MARK: Marker
 
@@ -144,7 +144,7 @@ actor ViewState {
         markerState = state
     }
 
-    nonisolated let markerStateShadow = Locked<MarkerState>(value: .UNDEFINED)
+    nonisolated let markerStateShadow = LockedObject<MarkerState>(value: .UNDEFINED)
     var markerState: MarkerState = .UNDEFINED {
         didSet {
             markerStateShadow.value = markerState
@@ -183,7 +183,7 @@ actor ViewState {
         }
     }
 
-    nonisolated let markerAnchorShadow = Locked<CGPoint>(value: CGPoint(x: 0.5, y: 0.5))
+    nonisolated let markerAnchorShadow = LockedObject<CGPoint>(value: CGPoint(x: 0.5, y: 0.5))
     var markerAnchor: CGPoint = CGPoint(x: 0.5, y: 0.5) {
         didSet {
             markerAnchorShadow.value = markerAnchor
@@ -194,7 +194,7 @@ actor ViewState {
         }
     }
 
-    nonisolated let markerPositionShadow = Locked<CLLocationCoordinate2D?>(value: nil)
+    nonisolated let markerPositionShadow = LockedObject<CLLocationCoordinate2D?>(value: nil)
     var markerPosition: CLLocationCoordinate2D? {
         didSet {
             markerPositionShadow.value = markerPosition
@@ -205,7 +205,7 @@ actor ViewState {
         }
     }
 
-    nonisolated let markerIconShadow = Locked<UIImage?>(value: nil)
+    nonisolated let markerIconShadow = LockedObject<UIImage?>(value: nil)
     var markerIcon: UIImage? {
         didSet {
             markerIconShadow.value = markerIcon
@@ -216,7 +216,7 @@ actor ViewState {
         }
     }
 
-    nonisolated let markerClickableShadow = Locked<Bool>(value: false)
+    nonisolated let markerClickableShadow = LockedObject<Bool>(value: false)
     var markerClickable: Bool = false {
         didSet {
             markerClickableShadow.value = markerClickable
@@ -227,8 +227,7 @@ actor ViewState {
     }
 
     // MARK: floorPlan
-
-    nonisolated let floorPlanStateShadow = Locked<PolygonState>(value: .UNDEFINED)
+    nonisolated let floorPlanStateShadow = LockedObject<PolygonState>(value: .UNDEFINED)
     var floorPlanState: PolygonState = .UNDEFINED {
         didSet {
             floorPlanStateShadow.value = floorPlanState
@@ -251,7 +250,7 @@ actor ViewState {
         }
     }
 
-    nonisolated let floorPlanStrokeColorShadow = Locked<UIColor?>(value: nil)
+    nonisolated let floorPlanStrokeColorShadow = LockedObject<UIColor?>(value: nil)
     var floorPlanStrokeColor: UIColor? {
         didSet {
             floorPlanStrokeColorShadow.value = floorPlanStrokeColor
@@ -263,7 +262,7 @@ actor ViewState {
         }
     }
 
-    nonisolated let floorPlanStrokeWidthShadow = Locked<Double?>(value: nil)
+    nonisolated let floorPlanStrokeWidthShadow = LockedObject<Double?>(value: nil)
     var floorPlanStrokeWidth: Double? {
         didSet {
             floorPlanStrokeWidthShadow.value = floorPlanStrokeWidth
@@ -275,7 +274,7 @@ actor ViewState {
         }
     }
 
-    nonisolated let floorPlanFillColorShadow = Locked<UIColor?>(value: nil)
+    nonisolated let floorPlanFillColorShadow = LockedObject<UIColor?>(value: nil)
     var floorPlanFillColor: UIColor? {
         didSet {
             floorPlanFillColorShadow.value = floorPlanFillColor
@@ -287,7 +286,7 @@ actor ViewState {
         }
     }
 
-    nonisolated let floorPlanGeometriesShadow = Locked<[GMSPath]>(value: [])
+    nonisolated let floorPlanGeometriesShadow = LockedObject<[GMSPath]>(value: [])
     var floorPlanGeometries: [GMSPath]? {
         didSet {
             floorPlanGeometriesShadow.value = floorPlanGeometries ?? []
@@ -319,8 +318,7 @@ actor ViewState {
     }
 
     // MARK: Polygon
-
-    nonisolated let polygonStateShadow = Locked<PolygonState>(value: .UNDEFINED)
+    nonisolated let polygonStateShadow = LockedObject<PolygonState>(value: .UNDEFINED)
     var polygonState: PolygonState = .UNDEFINED {
         didSet {
             polygonStateShadow.value = polygonState
@@ -346,7 +344,7 @@ actor ViewState {
         }
     }
 
-    nonisolated let polygonFillColorShadow = Locked<UIColor?>(value: nil)
+    nonisolated let polygonFillColorShadow = LockedObject<UIColor?>(value: nil)
     var polygonFillColor: UIColor? {
         didSet {
             polygonFillColorShadow.value = polygonFillColor
@@ -358,7 +356,7 @@ actor ViewState {
         }
     }
 
-    nonisolated let polygonStrokeColorShadow = Locked<UIColor?>(value: nil)
+    nonisolated let polygonStrokeColorShadow = LockedObject<UIColor?>(value: nil)
     var polygonStrokeColor: UIColor? {
         didSet {
             polygonStrokeColorShadow.value = polygonStrokeColor
@@ -370,7 +368,7 @@ actor ViewState {
         }
     }
 
-    nonisolated let polygonStrokeWidthShadow = Locked<Double?>(value: nil)
+    nonisolated let polygonStrokeWidthShadow = LockedObject<Double?>(value: nil)
     var polygonStrokeWidth: Double? {
         didSet {
             polygonStrokeWidthShadow.value = polygonStrokeWidth
@@ -382,7 +380,7 @@ actor ViewState {
         }
     }
 
-    nonisolated let polygonGeometriesShadow = Locked<[GMSPath]>(value: [])
+    nonisolated let polygonGeometriesShadow = LockedObject<[GMSPath]>(value: [])
     var polygonGeometries: [GMSPath]? {
         didSet {
             polygonGeometriesShadow.value = polygonGeometries ?? []
@@ -413,7 +411,7 @@ actor ViewState {
         }
     }
 
-    nonisolated let polygonClickableShadow = Locked<Bool>(value: false)
+    nonisolated let polygonClickableShadow = LockedObject<Bool>(value: false)
     var polygonClickable: Bool = false {
         didSet {
             polygonClickableShadow.value = polygonClickable
@@ -427,7 +425,7 @@ actor ViewState {
 
     // MARK: 2D Model
 
-    private nonisolated let model2DStateShadow = Locked<Model2DState>(value: .UNDEFINED)
+    private nonisolated let model2DStateShadow = LockedObject<Model2DState>(value: .UNDEFINED)
     private var model2DState: Model2DState = .UNDEFINED {
         didSet {
             model2DStateShadow.value = model2DState
@@ -448,7 +446,7 @@ actor ViewState {
         }
     }
 
-    private nonisolated let model2DPositionShadow = Locked<CLLocationCoordinate2D?>(value: nil)
+    private nonisolated let model2DPositionShadow = LockedObject<CLLocationCoordinate2D?>(value: nil)
     private var model2DPosition: CLLocationCoordinate2D? {
         didSet {
             model2DPositionShadow.value = model2DPosition
@@ -459,7 +457,7 @@ actor ViewState {
         }
     }
 
-    private nonisolated let model2DImageShadow = Locked<UIImage?>(value: nil)
+    private nonisolated let model2DImageShadow = LockedObject<UIImage?>(value: nil)
     private var model2DImage: UIImage? {
         didSet {
             model2DImageShadow.value = model2DImage
@@ -483,7 +481,7 @@ actor ViewState {
         }
     }
 
-    private nonisolated let model2DBearingShadow = Locked<Double?>(value: nil)
+    private nonisolated let model2DBearingShadow = LockedObject<Double?>(value: nil)
     private var model2DBearing: Double? {
         didSet {
             model2DBearingShadow.value = model2DBearing
@@ -494,8 +492,8 @@ actor ViewState {
             }
         }
     }
-
-    private nonisolated let model2DClickableShadow = Locked<Bool>(value: false)
+    
+    private nonisolated let model2DClickableShadow = LockedObject<Bool>(value: false)
     var model2DClickable: Bool = false {
         didSet {
             model2DClickableShadow.value = model2DClickable
@@ -525,8 +523,8 @@ actor ViewState {
         }
     }
 
-    private nonisolated let model2DWidthMeters = Locked<Double>(value: 0.0)
-    private nonisolated let model2DHeightMeters = Locked<Double>(value: 0.0)
+    private nonisolated let model2DWidthMeters = LockedObject<Double>(value: 0.0)
+    private nonisolated let model2DHeightMeters = LockedObject<Double>(value: 0.0)
 
     @MainActor
     init(viewModel: any MPViewModel, map: GMSMapView, is2dModelEnabled: Bool, isFloorPlanEnabled: Bool) async {
@@ -1198,4 +1196,29 @@ private extension UIImage {
 
     /// Will place labels on right.
     case right
+}
+
+// The "old", inefficient way
+class LockedObject<T> {
+    
+    private var obj: T
+    private let lock = NSLock()
+    
+    public required init(value: T) {
+        self.obj = value
+    }
+    
+    public var value: T {
+        get {
+            lock.withLock {
+                return obj
+            }
+        }
+        set {
+            lock.withLock {
+                obj = newValue
+            }
+        }
+    }
+
 }
