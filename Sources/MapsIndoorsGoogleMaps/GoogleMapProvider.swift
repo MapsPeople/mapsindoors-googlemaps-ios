@@ -84,12 +84,10 @@ public class GoogleMapProvider: MPMapProvider {
             mapViewDelegate?.originalMapViewDelegate = originalDelegate
         }
         self.mapView?.delegate = mapViewDelegate
-
-        configureMapsIndoorsModuleLicensing()
     }
 
     public func setViewModels(models: [any MPViewModel], forceClear: Bool) async {
-        configureMapsIndoorsModuleLicensing()
+        await configureMapsIndoorsModuleLicensing()
         do {
             try await renderer?.setViewModels(models: models, collision: collisionHandling, forceClear: forceClear)
         } catch { /* do nothing */ }
@@ -123,10 +121,10 @@ public class GoogleMapProvider: MPMapProvider {
     // Unused
     public var featureExtrusionOpacity: Double = 0
 
-    private func configureMapsIndoorsModuleLicensing() {
+    private func configureMapsIndoorsModuleLicensing() async {
         if let solutionModules = MPMapsIndoors.shared.solution?.modules {
-            renderer?.is2dModelsEnabled = solutionModules.contains("2dmodels")
-            renderer?.isFloorPlanEnabled = solutionModules.contains("floorplan")
+            await renderer?.setIsModel2DEnabled(solutionModules.contains("2dmodels"))
+            await renderer?.setIsFloorPlanEnabled(solutionModules.contains("floorplan"))
         }
     }
 }
