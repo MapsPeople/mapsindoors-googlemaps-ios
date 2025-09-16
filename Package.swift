@@ -3,7 +3,7 @@
 
 import PackageDescription
 
-let mapsindoorsVersion = Version("4.13.2")
+let mapsindoorsVersion = Version("4.14.0")
 
 let package = Package(
     name: "MapsIndoorsGoogleMaps",
