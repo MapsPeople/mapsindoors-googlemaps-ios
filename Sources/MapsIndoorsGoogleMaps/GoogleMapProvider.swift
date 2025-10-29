@@ -15,6 +15,10 @@ public class GoogleMapProvider: MPMapProvider {
     public var distanceMatrixService: MPExternalDistanceMatrixService {
         GMDistanceMatrixService(apiKey: googleApiKey! as String)
     }
+    
+    public func invalidateRenderCache() {
+        // nothing
+    }
 
     public var customInfoWindow: MPCustomInfoWindow?
 
