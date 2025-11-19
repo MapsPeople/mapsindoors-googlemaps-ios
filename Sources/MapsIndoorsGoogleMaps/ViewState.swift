@@ -89,7 +89,7 @@ actor ViewState {
     // Usefull debug flag, drawing a red box around a marker/label - which makes debugging collisions/clustering easier to visualize
     static let DEBUG_DRAW_IMAGE_BORDER = false
 
-    private weak var map: GMSMapView?
+    private weak var map: GMSMapView!
     let id: String
 
     var lastTimeTag = CFAbsoluteTimeGetCurrent()
@@ -551,16 +551,16 @@ actor ViewState {
     @MainActor
     var bounds: CGRect? {
         get async {
-            guard let mapView = await map, await markerState.isVisible, let markerPos = await markerPosition, await markerIcon != nil else { return nil }
+            guard await markerState.isVisible, await markerPosition != nil, await markerIcon != nil else { return nil }
             var rect: CGRect?
-
-            let p = mapView.projection.point(for: markerPos)
-            if let size = await imageBundle?.getSize(state: markerState) {
-                let x = await p.x - (size.width * markerAnchor.x)
-                let y = await p.y - (size.height * markerAnchor.y)
-                rect = CGRect(x: x.rounded(.down), y: y.rounded(.down), width: size.width.rounded(.down), height: size.height.rounded(.down))
+            if let markerPos = await markerPosition {
+                let p = await map.projection.point(for: markerPos)
+                if let size = await imageBundle?.getSize(state: markerState) {
+                    let x = await p.x - (size.width * markerAnchor.x)
+                    let y = await p.y - (size.height * markerAnchor.y)
+                    rect = CGRect(x: x.rounded(.down), y: y.rounded(.down), width: size.width.rounded(.down), height: size.height.rounded(.down))
+                }
             }
-
             return rect
         }
     }
@@ -642,8 +642,8 @@ actor ViewState {
             model2DState = newModel.model2DState
             if model2DState.isVisible || model2DState == .UNDEFINED {
                 if let bundle = newModel.model2DBundle {
-                    if let mapView = map, let image = bundle.icon {
-                        let zoom = Int(mapView.camera.zoom)
+                    if let image = bundle.icon {
+                        let zoom = Int(map.camera.zoom)
                         let scaleFactor = switch zoom {
                         case 21: 1.0
                         case 20: 0.9
@@ -967,7 +967,7 @@ extension MPViewModel {
         var geometries = [GMSPath]()
 
         if polygon?.geometry.type == .Polygon {
-            for polygon in polygon?.geometry.coordinates as? [[MPPoint]] ?? [] {
+            for polygon in polygon?.geometry.coordinates as! [[MPPoint]] {
                 let path = GMSMutablePath()
                 for pathPoint in polygon {
                     path.add(pathPoint.coordinate)
@@ -977,7 +977,7 @@ extension MPViewModel {
         }
 
         if polygon?.geometry.type == .MultiPolygon {
-            for polygons in polygon?.geometry.coordinates as? [MPPolygonGeometry] ?? [] {
+            for polygons in polygon?.geometry.coordinates as! [MPPolygonGeometry] {
                 for polygon in polygons.coordinates {
                     let path = GMSMutablePath()
                     for pathPoint in polygon {
@@ -1004,7 +1004,7 @@ extension MPViewModel {
         var geometries = [GMSPath]()
 
         if floorPlanExtrusion?.geometry.type == .Polygon {
-            for polygon in floorPlanExtrusion?.geometry.coordinates as? [[MPPoint]] ?? [] {
+            for polygon in floorPlanExtrusion?.geometry.coordinates as! [[MPPoint]] {
                 let path = GMSMutablePath()
                 for pathPoint in polygon {
                     path.add(pathPoint.coordinate)
@@ -1014,7 +1014,7 @@ extension MPViewModel {
         }
 
         if floorPlanExtrusion?.geometry.type == .MultiPolygon {
-            for polygons in floorPlanExtrusion?.geometry.coordinates as? [MPPolygonGeometry] ?? [] {
+            for polygons in floorPlanExtrusion?.geometry.coordinates as! [MPPolygonGeometry] {
                 for polygon in polygons.coordinates {
                     let path = GMSMutablePath()
                     for pathPoint in polygon {
