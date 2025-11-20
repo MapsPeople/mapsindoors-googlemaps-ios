@@ -3,7 +3,7 @@
 
 import PackageDescription
 
-let mapsindoorsVersion = Version("4.16.0-rc.1")
+let mapsindoorsVersion = Version("4.16.0-rc.2")
 
 let package = Package(
     name: "MapsIndoorsGoogleMaps",
@@ -15,7 +15,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/MapsPeople/mapsindoors-core-ios.git", exact: mapsindoorsVersion),
-        .package(url: "https://github.com/googlemaps/ios-maps-sdk.git", exact: "9.4.0"),
+        .package(url: "https://github.com/googlemaps/ios-maps-sdk.git", "8.4.0"..."9.4.0"),
     ],
     targets: [
         .target(
