@@ -6,7 +6,6 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
     weak var originalMapViewDelegate: GMSMapViewDelegate?
     weak var mapsIndoorsDelegate: MPMapProviderDelegate?
     var userGestureInProgress: Bool?
-    var didRunFirstMapIdle: Bool?
     weak var map: GoogleMapProvider?
 
     required init(googleMapProvider: GoogleMapProvider) {
@@ -215,10 +214,7 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func didTapMyLocationButton(for mapView: GMSMapView) -> Bool {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.didTapMyLocationButton(for:))) {
-            return originalMapViewDelegate.didTapMyLocationButton?(for: mapView) != nil
-        }
-        return originalMapViewDelegate?.didTapMyLocationButton?(for: mapView) == nil
+        originalMapViewDelegate?.didTapMyLocationButton?(for: mapView) == nil
     }
 
     /**
@@ -241,6 +237,7 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
         if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapViewSnapshotReady(_:))) {
             originalMapViewDelegate.mapViewSnapshotReady?(mapView)
         }
+        mapsIndoorsDelegate?.cameraSnapshot()
     }
 
     /**
