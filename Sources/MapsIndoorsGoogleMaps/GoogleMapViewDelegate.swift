@@ -6,7 +6,8 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
     weak var originalMapViewDelegate: GMSMapViewDelegate?
     weak var mapsIndoorsDelegate: MPMapProviderDelegate?
     var userGestureInProgress: Bool?
-    weak var map: GoogleMapProvider?
+    var didRunFirstMapIdle: Bool?
+    weak var map: GoogleMapProvider!
 
     required init(googleMapProvider: GoogleMapProvider) {
         map = googleMapProvider
@@ -19,17 +20,18 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
 
     func mapView(_ mapView: GMSMapView, didTap marker: GMSMarker) -> Bool {
         guard marker.isTappable else { return false }
-
         var result = false
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didTap:))) {
-            result = originalMapViewDelegate.mapView?(mapView, didTap: marker) ?? false
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didTap:))) {
+                result = originalMapViewDelegate?.mapView?(mapView, didTap: marker) ?? false
+            }
         }
 
         // Retrieve the corresponding marker identifier
         let markerIdentifier = marker.locationId
 
         if let tag = marker.userData as? String, tag == "end_marker" || tag == "start_marker" || tag.starts(with: "stop") {
-            map?.routeRenderer.routeMarkerDelegate?.onRouteMarkerClicked(tag: tag)
+            map.routeRenderer.routeMarkerDelegate?.onRouteMarkerClicked(tag: tag)
         }
 
         return mapsIndoorsDelegate?.didTap(locationId: markerIdentifier, type: .marker) ?? result
@@ -42,8 +44,10 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func mapView(_ mapView: GMSMapView, didTapAt coordinate: CLLocationCoordinate2D) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didTapAt:))) {
-            originalMapViewDelegate.mapView?(mapView, didTapAt: coordinate)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didTapAt:))) {
+                originalMapViewDelegate?.mapView?(mapView, didTapAt: coordinate)
+            }
         }
 
         mapsIndoorsDelegate?.didTap(coordinate: coordinate)
@@ -57,15 +61,19 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
     func mapView(_ mapView: GMSMapView, willMove gesture: Bool) {
         userGestureInProgress = gesture
 
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:willMove:))) {
-            originalMapViewDelegate.mapView?(mapView, willMove: gesture)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:willMove:))) {
+                originalMapViewDelegate?.mapView?(mapView, willMove: gesture)
+            }
         }
         mapsIndoorsDelegate?.cameraWillMove()
     }
 
     func mapView(_ mapView: GMSMapView, idleAt position: GMSCameraPosition) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:idleAt:))) {
-            originalMapViewDelegate.mapView?(mapView, idleAt: position)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:idleAt:))) {
+                originalMapViewDelegate?.mapView?(mapView, idleAt: position)
+            }
         }
         mapsIndoorsDelegate?.cameraIdle()
     }
@@ -76,8 +84,10 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func mapView(_ mapView: GMSMapView, didChange position: GMSCameraPosition) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didChange:))) {
-            originalMapViewDelegate.mapView?(mapView, didChange: position)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didChange:))) {
+                originalMapViewDelegate?.mapView?(mapView, didChange: position)
+            }
         }
         mapsIndoorsDelegate?.cameraChangedPosition()
     }
@@ -88,8 +98,10 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func mapView(_ mapView: GMSMapView, didTapInfoWindowOf marker: GMSMarker) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:markerInfoWindow:))) {
-            originalMapViewDelegate.mapView?(mapView, didTapInfoWindowOf: marker)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:markerInfoWindow:))) {
+                originalMapViewDelegate?.mapView?(mapView, didTapInfoWindowOf: marker)
+            }
         }
 
         if let id = marker.userData as? String {
@@ -103,8 +115,10 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func mapView(_ mapView: GMSMapView, didBeginDragging marker: GMSMarker) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didBeginDragging:))) {
-            originalMapViewDelegate.mapView?(mapView, didBeginDragging: marker)
+        if let originaldelegate = originalMapViewDelegate {
+            if originaldelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didBeginDragging:))) {
+                originalMapViewDelegate?.mapView?(mapView, didBeginDragging: marker)
+            }
         }
     }
 
@@ -114,8 +128,10 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func mapView(_ mapView: GMSMapView, didEndDragging marker: GMSMarker) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didEndDragging:))) {
-            originalMapViewDelegate.mapView?(mapView, didEndDragging: marker)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didEndDragging:))) {
+                originalMapViewDelegate?.mapView?(mapView, didEndDragging: marker)
+            }
         }
     }
 
@@ -125,8 +141,10 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func mapView(_ mapView: GMSMapView, didDrag marker: GMSMarker) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didDrag:))) {
-            originalMapViewDelegate.mapView?(mapView, didDrag: marker)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didDrag:))) {
+                originalMapViewDelegate?.mapView?(mapView, didDrag: marker)
+            }
         }
     }
 
@@ -136,8 +154,10 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func mapViewDidStartTileRendering(_ mapView: GMSMapView) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapViewDidStartTileRendering(_:))) {
-            originalMapViewDelegate.mapViewDidStartTileRendering?(mapView)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapViewDidStartTileRendering(_:))) {
+                originalMapViewDelegate?.mapViewDidStartTileRendering?(mapView)
+            }
         }
     }
 
@@ -151,8 +171,10 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
     private var didLoadStyling = false
 
     func mapViewDidFinishTileRendering(_ mapView: GMSMapView) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapViewDidFinishTileRendering(_:))) {
-            originalMapViewDelegate.mapViewDidFinishTileRendering?(mapView)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapViewDidFinishTileRendering(_:))) {
+                originalMapViewDelegate?.mapViewDidFinishTileRendering?(mapView)
+            }
         }
 
         if didLoadStyling == false {
@@ -178,8 +200,10 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
     func mapView(_ mapView: GMSMapView, didTap overlay: GMSOverlay) {
         guard overlay.isTappable else { return }
 
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didTap:))) {
-            originalMapViewDelegate.mapView?(mapView, didTap: overlay)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didTap:))) {
+                originalMapViewDelegate?.mapView?(mapView, didTap: overlay)
+            }
         }
 
         let id = overlay.locationId
@@ -192,8 +216,10 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func mapView(_ mapView: GMSMapView, didLongPressAt coordinate: CLLocationCoordinate2D) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didLongPressAt:))) {
-            originalMapViewDelegate.mapView?(mapView, didLongPressAt: coordinate)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didLongPressAt:))) {
+                originalMapViewDelegate?.mapView?(mapView, didLongPressAt: coordinate)
+            }
         }
     }
 
@@ -203,8 +229,10 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func mapView(_ mapView: GMSMapView, didLongPressInfoWindowOf marker: GMSMarker) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didLongPressInfoWindowOf:))) {
-            originalMapViewDelegate.mapView?(mapView, didLongPressInfoWindowOf: marker)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didLongPressInfoWindowOf:))) {
+                originalMapViewDelegate?.mapView?(mapView, didLongPressInfoWindowOf: marker)
+            }
         }
     }
 
@@ -214,7 +242,12 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func didTapMyLocationButton(for mapView: GMSMapView) -> Bool {
-        originalMapViewDelegate?.didTapMyLocationButton?(for: mapView) == nil
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.didTapMyLocationButton(for:))) {
+                return (originalMapViewDelegate?.didTapMyLocationButton?(for: mapView)) != nil
+            }
+        }
+        return (originalMapViewDelegate?.didTapMyLocationButton?(for: mapView)) == nil
     }
 
     /**
@@ -223,8 +256,10 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func mapView(_ mapView: GMSMapView, didTapMyLocation location: CLLocationCoordinate2D) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didTapMyLocation:))) {
-            originalMapViewDelegate.mapView?(mapView, didTapMyLocation: location)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didTapMyLocation:))) {
+                originalMapViewDelegate?.mapView?(mapView, didTapMyLocation: location)
+            }
         }
     }
 
@@ -234,10 +269,11 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func mapViewSnapshotReady(_ mapView: GMSMapView) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapViewSnapshotReady(_:))) {
-            originalMapViewDelegate.mapViewSnapshotReady?(mapView)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapViewSnapshotReady(_:))) {
+                originalMapViewDelegate?.mapViewSnapshotReady?(mapView)
+            }
         }
-        mapsIndoorsDelegate?.cameraSnapshot()
     }
 
     /**
@@ -246,8 +282,10 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func mapView(_ mapView: GMSMapView, didCloseInfoWindowOf marker: GMSMarker) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didCloseInfoWindowOf:))) {
-            originalMapViewDelegate.mapView?(mapView, didCloseInfoWindowOf: marker)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didCloseInfoWindowOf:))) {
+                originalMapViewDelegate?.mapView?(mapView, didCloseInfoWindowOf: marker)
+            }
         }
     }
 
@@ -257,8 +295,10 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func mapView(_ mapView: GMSMapView, didTapPOIWithPlaceID placeID: String, name: String, location: CLLocationCoordinate2D) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didTapPOIWithPlaceID:name:location:))) {
-            originalMapViewDelegate.mapView?(mapView, didTapPOIWithPlaceID: placeID, name: name, location: location)
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didTapPOIWithPlaceID:name:location:))) {
+                originalMapViewDelegate?.mapView?(mapView, didTapPOIWithPlaceID: placeID, name: name, location: location)
+            }
         }
     }
 
@@ -269,9 +309,11 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func mapView(_ mapView: GMSMapView, markerInfoContents marker: GMSMarker) -> UIView? {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:markerInfoContents:))) {
-            if let infoWindow = originalMapViewDelegate.mapView?(mapView, markerInfoContents: marker) {
-                return infoWindow
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:markerInfoContents:))) {
+                if let infoWindow = originalMapViewDelegate?.mapView?(mapView, markerInfoContents: marker) {
+                    return infoWindow
+                }
             }
         }
         return nil
@@ -284,30 +326,32 @@ class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
      */
 
     func mapView(_ mapView: GMSMapView, markerInfoWindow marker: GMSMarker) -> UIView? {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:markerInfoWindow:))) {
-            if let infoWindow = originalMapViewDelegate.mapView?(mapView, markerInfoWindow: marker) {
-                return infoWindow
+        if let originalDelegate = originalMapViewDelegate {
+            if originalDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:markerInfoWindow:))) {
+                if let infoWindow = originalMapViewDelegate?.mapView?(mapView, markerInfoWindow: marker) {
+                    return infoWindow
+                }
             }
         }
 
         var res: UIView?
         if let id = marker.userData as? String {
             if let location = MPMapsIndoors.shared.locationWith(locationId: id) {
-                res = map?.customInfoWindow?.infoWindowFor(location: location)
+                res = map.customInfoWindow?.infoWindowFor(location: location)
             }
         }
         return res
     }
 }
 
-extension GMSMarker {
-    @objc fileprivate override var locationId: String {
+private extension GMSMarker {
+    @objc override var locationId: String {
         (userData as? String) ?? ""
     }
 }
 
-extension GMSOverlay {
-    @objc fileprivate var locationId: String {
+private extension GMSOverlay {
+    @objc var locationId: String {
         (userData as? String) ?? ""
     }
 }
