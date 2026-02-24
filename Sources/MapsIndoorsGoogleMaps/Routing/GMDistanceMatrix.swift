@@ -21,7 +21,7 @@ class GoogleDistanceMatrix: Codable {
     }
 
     var asMPMatrix: MPDistanceMatrixResult {
-        var mpMatrix = MPDistanceMatrixResult()
+        let mpMatrix = MPDistanceMatrixResult()
         guard rows != nil else { return mpMatrix }
 
         mpMatrix.origin_addresses = originAddresses

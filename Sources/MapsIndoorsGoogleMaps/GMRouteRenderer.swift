@@ -87,8 +87,8 @@ class GMRouteRenderer: MPRouteRenderer {
                 // https://github.com/brownsoo/ValueAnimator/tree/0.6.7
                 self.valueAnimator = ValueAnimator.animate("val", from: 0.0, to: 1.0, duration: duration,
                                                            easing: EaseLinear.easeInOut(),
-                                                           onChanged: { _, v in
-                                                               self.queue.sync { [self] in
+                                                           onChanged: { [weak self] _, v in
+                                                               self?.queue.sync { [weak self] in
                                                                    var points = [CLLocationCoordinate2D]()
                                                                    let routePoints = route
 
@@ -105,8 +105,9 @@ class GMRouteRenderer: MPRouteRenderer {
                                                                            if distance + nextDistance > stopDistance {
                                                                                nextDistance = stopDistance - distance
                                                                                let bearing = MPGeometryUtils.bearingBetweenPoints(from: lastPoint, to: nextPoint)
-                                                                               let computedPoint = computeOffset(from: lastPoint, dist: nextDistance, head: bearing)
-                                                                               points.append(computedPoint)
+                                                                               if let computedPoint = self?.computeOffset(from: lastPoint, dist: nextDistance, head: bearing) {
+                                                                                   points.append(computedPoint)
+                                                                               }
                                                                                break
                                                                            } else {
                                                                                points.append(nextPoint)

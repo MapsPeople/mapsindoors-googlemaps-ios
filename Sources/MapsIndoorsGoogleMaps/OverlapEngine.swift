@@ -165,9 +165,7 @@ actor OverlapEngine {
         var winner = await winnerState.bounds ?? CGRect(x: -1000, y: -1000, width: 1, height: 1)
         var loser = await loserState.bounds ?? CGRect(x: -2000, y: -2000, width: 1, height: 1)
         let winnerHasLabel = await winnerState.markerState.isLabelVisible
-        let winnerHasIcon = await winnerState.markerState.isIconVisible
         let loserHasLabel = await loserState.markerState.isLabelVisible
-        var loserHasIcon = await loserState.markerState.isIconVisible
 
         let winnersOriginalState = await winnerState.markerState
         let losersOriginalState = await loserState.markerState
@@ -207,9 +205,7 @@ actor OverlapEngine {
     private func removeLabelFirst(winnerState: ViewState, loserState: ViewState) async {
         var winner = await winnerState.bounds ?? CGRect(x: -1000, y: -1000, width: 1, height: 1)
         var loser = await loserState.bounds ?? CGRect(x: -2000, y: -2000, width: 1, height: 1)
-        let winnerHasLabel = await winnerState.markerState.isLabelVisible
         let winnerHasIcon = await winnerState.markerState.isIconVisible
-        var loserHasLabel = await loserState.markerState.isLabelVisible
         let loserHasIcon = await loserState.markerState.isIconVisible
         
         let winnersOriginalState = await winnerState.markerState
