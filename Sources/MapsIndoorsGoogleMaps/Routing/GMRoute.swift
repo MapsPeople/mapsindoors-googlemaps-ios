@@ -3,7 +3,7 @@ import GoogleMaps
 import MapsIndoors
 import MapsIndoorsCore
 
-@_spi(Testable) public struct GoogleRouteResponse: Codable {
+struct GoogleRouteResponse: Codable {
     public let routes: [GoogleRoute]
     public let status: String
 
@@ -13,7 +13,7 @@ import MapsIndoorsCore
     }
 }
 
-@_spi(Testable) public struct GoogleRoute: Codable {
+struct GoogleRoute: Codable {
     public let bounds: GoogleBounds?
     public let copyrights: String?
     public let legs: [GoogleLeg]?
@@ -91,7 +91,7 @@ import MapsIndoorsCore
         let path = GMSPath(fromEncodedPath: googleStep.polyline!.points!)!
 
         var geometry = [MPRouteCoordinateInternal]()
-        for i in 0 ..< path.count() {
+        for i in 0..<path.count() {
             let c = path.coordinate(at: i)
             let x = MPRouteCoordinateInternal()
             x.lat = c.latitude as NSNumber
@@ -142,15 +142,15 @@ import MapsIndoorsCore
     }
 }
 
-@_spi(Testable) public struct GoogleBounds: Codable {
+struct GoogleBounds: Codable {
     public let northeast, southwest: GoogleCoordinate?
 }
 
-@_spi(Testable) public struct GoogleCoordinate: Codable {
+struct GoogleCoordinate: Codable {
     public let lat, lng: Double?
 }
 
-@_spi(Testable) public struct GoogleLeg: Codable {
+struct GoogleLeg: Codable {
     public let distance, duration: GoogleDistance?
     public let endAddress: String?
     public let endLocation: GoogleCoordinate?
@@ -168,12 +168,12 @@ import MapsIndoorsCore
     }
 }
 
-@_spi(Testable) public struct GoogleDistance: Codable {
+struct GoogleDistance: Codable {
     public let text: String?
     public let value: Double?
 }
 
-@_spi(Testable) public struct GoogleStep: Codable {
+struct GoogleStep: Codable {
     public let distance, duration: GoogleDistance?
     public let endLocation: GoogleCoordinate?
     public let htmlInstructions: String?
@@ -195,18 +195,18 @@ import MapsIndoorsCore
     }
 }
 
-@_spi(Testable) public struct GooglePolyline: Codable {
+struct GooglePolyline: Codable {
     public let points: String?
 }
 
-@_spi(Testable) public enum GoogleTravelMode: String, Codable {
+enum GoogleTravelMode: String, Codable {
     case driving = "DRIVING"
     case walking = "WALKING"
     case bicycling = "BICYCLING"
     case transit = "TRANSIT"
 }
 
-@_spi(Testable) public struct GoogleTransitDetails: Codable {
+struct GoogleTransitDetails: Codable {
     public let arrival_stop: GoogleLocation
     public let arrival_time: GoogleTime
     public let departure_stop: GoogleLocation
@@ -217,29 +217,29 @@ import MapsIndoorsCore
     public let trip_short_name: String
 }
 
-@_spi(Testable) public struct GoogleLocation: Codable {
+struct GoogleLocation: Codable {
     public let location: GoogleCoordinate
     public let name: String
 }
 
-@_spi(Testable) public struct GoogleTime: Codable {
+struct GoogleTime: Codable {
     public let text: String
     public let time_zone: String
     public let value: Int
 }
 
-@_spi(Testable) public struct GoogleTransitLine: Codable {
+struct GoogleTransitLine: Codable {
     public let agencies: [GoogleTransitAgency]
     public let short_name: String
     public let vehicle: GoogleTransitVehicle
 }
 
-@_spi(Testable) public struct GoogleTransitAgency: Codable {
+struct GoogleTransitAgency: Codable {
     public let name: String
     public let url: String
 }
 
-@_spi(Testable) public struct GoogleTransitVehicle: Codable {
+struct GoogleTransitVehicle: Codable {
     public let icon: String
     public let name: String
     public let type: String
