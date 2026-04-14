@@ -27,9 +27,11 @@ class GMDistanceMatrixService: MPExternalDistanceMatrixService {
         self.apiKey = apiKey
     }
 
-    func query(origins: [CLLocationCoordinate2D],
-               destinations: [CLLocationCoordinate2D],
-               config: MPDirectionsConfig) async throws -> MPDistanceMatrixResult? {
+    func query(
+        origins: [CLLocationCoordinate2D],
+        destinations: [CLLocationCoordinate2D],
+        config: MPDirectionsConfig
+    ) async throws -> MPDistanceMatrixResult? {
         let url = buildUrl(origins: origins, destinations: destinations, config: MPDirectionsConfig(origin: MPPoint(), destination: MPPoint()))
 
         let (data, _) = try await URLSession.shared.data(from: url)
@@ -170,16 +172,20 @@ class GMDistanceMatrixService: MPExternalDistanceMatrixService {
         }
     }
 
-    func pruneDistanceMatrixDimensions(origins: [MPPoint],
-                                       destinations: [MPPoint]) -> ([MPPoint], [MPPoint]) {
+    func pruneDistanceMatrixDimensions(
+        origins: [MPPoint],
+        destinations: [MPPoint]
+    ) -> ([MPPoint], [MPPoint]) {
         var resultingOrigins = origins
         var resultingDestinations = destinations
 
         // Prune origins
         if origins.count > maxOrigins {
-            let destinationsAvg = MPPoint(coordinate:
-                CLLocationCoordinate2D(latitude: (destinations.map(\.latitude).reduce(0.0, +)) / Double(destinations.count),
-                                       longitude: (destinations.map(\.longitude).reduce(0.0, +)) / Double(destinations.count)))
+            let destinationsAvg = MPPoint(
+                coordinate:
+                    CLLocationCoordinate2D(
+                        latitude: (destinations.map(\.latitude).reduce(0.0, +)) / Double(destinations.count),
+                        longitude: (destinations.map(\.longitude).reduce(0.0, +)) / Double(destinations.count)))
 
             var originsDistanceTuple = [(MPPoint, Double)]()
             for origin in origins {
@@ -193,9 +199,11 @@ class GMDistanceMatrixService: MPExternalDistanceMatrixService {
 
         // Prune destinations
         if destinations.count > maxDestinations {
-            let originsAvg = MPPoint(coordinate:
-                CLLocationCoordinate2D(latitude: (origins.map(\.latitude).reduce(0.0, +)) / Double(origins.count),
-                                       longitude: (origins.map(\.longitude).reduce(0.0, +)) / Double(origins.count)))
+            let originsAvg = MPPoint(
+                coordinate:
+                    CLLocationCoordinate2D(
+                        latitude: (origins.map(\.latitude).reduce(0.0, +)) / Double(origins.count),
+                        longitude: (origins.map(\.longitude).reduce(0.0, +)) / Double(origins.count)))
 
             var distinationsDistanceTuple = [(MPPoint, Double)]()
             for destination in destinations {

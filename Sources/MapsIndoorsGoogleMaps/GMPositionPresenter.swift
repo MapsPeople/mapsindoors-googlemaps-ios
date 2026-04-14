@@ -20,14 +20,16 @@ class GMPositionPresenter: MPPositionPresenter {
         circle.zIndex = Int32(MapOverlayZIndex.positioningAccuracyCircle.rawValue)
     }
 
-    func apply(position: CLLocationCoordinate2D,
-               markerIcon: UIImage,
-               markerBearing: Double,
-               markerOpacity: Double,
-               circleRadiusMeters: Double,
-               circleFillColor: UIColor,
-               circleStrokeColor: UIColor,
-               circleStrokeWidth: Double) {
+    func apply(
+        position: CLLocationCoordinate2D,
+        markerIcon: UIImage,
+        markerBearing: Double,
+        markerOpacity: Double,
+        circleRadiusMeters: Double,
+        circleFillColor: UIColor,
+        circleStrokeColor: UIColor,
+        circleStrokeWidth: Double
+    ) {
         DispatchQueue.main.async {
             self.marker.position = position
             self.marker.icon = markerIcon
@@ -51,9 +53,9 @@ class GMPositionPresenter: MPPositionPresenter {
     }
 
     func clear() {
-        DispatchQueue.main.async { [self] in
-            marker.map = nil
-            circle.map = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.marker.map = nil
+            self?.circle.map = nil
         }
     }
 }

@@ -32,9 +32,11 @@ class GMRouteRenderer: MPRouteRenderer {
 
     private var queue = DispatchQueue(label: "MapsIndoors.GoogleMapsRouteRenderer")
 
-    func apply(model: RouteViewModelProducer, animate: Bool, duration: TimeInterval,
-               repeating: Bool, primaryColor: UIColor, secondaryColor: UIColor,
-               primaryWidth: Float, secondaryWidth: Float, pathSmoothing: Bool) {
+    func apply(
+        model: RouteViewModelProducer, animate: Bool, duration: TimeInterval,
+        repeating: Bool, primaryColor: UIColor, secondaryColor: UIColor,
+        primaryWidth: Float, secondaryWidth: Float, pathSmoothing: Bool
+    ) {
         for viewState in views {
             Task {
                 await viewState.destroy()
@@ -70,7 +72,7 @@ class GMRouteRenderer: MPRouteRenderer {
             if animate {
                 var route = [CLLocationCoordinate2D]()
                 if path.count() > 0 {
-                    for i in 0 ... (path.count() - 1) {
+                    for i in 0...(path.count() - 1) {
                         route.append(path.coordinate(at: i))
                     }
                 }
@@ -85,59 +87,60 @@ class GMRouteRenderer: MPRouteRenderer {
                 }
 
                 // https://github.com/brownsoo/ValueAnimator/tree/0.6.7
-                self.valueAnimator = ValueAnimator.animate("val", from: 0.0, to: 1.0, duration: duration,
-                                                           easing: EaseLinear.easeInOut(),
-                                                           onChanged: { [weak self] _, v in
-                                                               self?.queue.sync { [weak self] in
-                                                                   var points = [CLLocationCoordinate2D]()
-                                                                   let routePoints = route
+                self.valueAnimator = ValueAnimator.animate(
+                    "val", from: 0.0, to: 1.0, duration: duration,
+                    easing: EaseLinear.easeInOut(),
+                    onChanged: { [weak self] _, v in
+                        self?.queue.sync { [weak self] in
+                            var points = [CLLocationCoordinate2D]()
+                            let routePoints = route
 
-                                                                   let stopDistance = v.value * totalDistance
-                                                                   var distance = 0.0
+                            let stopDistance = v.value * totalDistance
+                            var distance = 0.0
 
-                                                                   for i in stride(from: 0, through: routePoints.count - 1, by: 1) {
-                                                                       let nextPoint = routePoints[i]
-                                                                       if i == 0 || v.value == 1.0 {
-                                                                           points.append(nextPoint)
-                                                                       } else {
-                                                                           let lastPoint = routePoints[i - 1]
-                                                                           var nextDistance = MPGeometryUtils.distance(from: MPGeoPoint(coordinate: lastPoint), to: MPGeoPoint(coordinate: nextPoint))
-                                                                           if distance + nextDistance > stopDistance {
-                                                                               nextDistance = stopDistance - distance
-                                                                               let bearing = MPGeometryUtils.bearingBetweenPoints(from: lastPoint, to: nextPoint)
-                                                                               if let computedPoint = self?.computeOffset(from: lastPoint, dist: nextDistance, head: bearing) {
-                                                                                   points.append(computedPoint)
-                                                                               }
-                                                                               break
-                                                                           } else {
-                                                                               points.append(nextPoint)
-                                                                           }
-                                                                           distance += nextDistance
-                                                                       }
-                                                                   }
+                            for i in stride(from: 0, through: routePoints.count - 1, by: 1) {
+                                let nextPoint = routePoints[i]
+                                if i == 0 || v.value == 1.0 {
+                                    points.append(nextPoint)
+                                } else {
+                                    let lastPoint = routePoints[i - 1]
+                                    var nextDistance = MPGeometryUtils.distance(from: MPGeoPoint(coordinate: lastPoint), to: MPGeoPoint(coordinate: nextPoint))
+                                    if distance + nextDistance > stopDistance {
+                                        nextDistance = stopDistance - distance
+                                        let bearing = MPGeometryUtils.bearingBetweenPoints(from: lastPoint, to: nextPoint)
+                                        if let computedPoint = self?.computeOffset(from: lastPoint, dist: nextDistance, head: bearing) {
+                                            points.append(computedPoint)
+                                        }
+                                        break
+                                    } else {
+                                        points.append(nextPoint)
+                                    }
+                                    distance += nextDistance
+                                }
+                            }
 
-                                                                   let animatedPath = GMSMutablePath()
-                                                                   for coord in points {
-                                                                       animatedPath.add(coord)
-                                                                   }
+                            let animatedPath = GMSMutablePath()
+                            for coord in points {
+                                animatedPath.add(coord)
+                            }
 
-                                                                   DispatchQueue.main.async { [weak self] in
-                                                                       if self?.valueAnimator?.isAnimating ?? false {
-                                                                           if self?.animationPolyline != nil {
-                                                                               self?.animationPolyline!.path = animatedPath
-                                                                           } else {
-                                                                               self?.animationPolyline = GMSPolyline(path: animatedPath)
-                                                                               self?.animationPolyline?.strokeColor = secondaryColor
-                                                                               self?.animationPolyline?.strokeWidth = CGFloat(secondaryWidth)
-                                                                               self?.animationPolyline?.zIndex = Int32(MapOverlayZIndex.directionsOverlays.rawValue)
-                                                                               self?.animationPolyline?.map = self?.map
-                                                                           }
-                                                                       } else {
-                                                                           self?.clear()
-                                                                       }
-                                                                   }
-                                                               }
-                                                           }, option: ValueAnimator.OptionBuilder().setDelay(0.1).setRepeatInfinitely(repeating).build())
+                            DispatchQueue.main.async { [weak self] in
+                                if self?.valueAnimator?.isAnimating ?? false {
+                                    if self?.animationPolyline != nil {
+                                        self?.animationPolyline!.path = animatedPath
+                                    } else {
+                                        self?.animationPolyline = GMSPolyline(path: animatedPath)
+                                        self?.animationPolyline?.strokeColor = secondaryColor
+                                        self?.animationPolyline?.strokeWidth = CGFloat(secondaryWidth)
+                                        self?.animationPolyline?.zIndex = Int32(MapOverlayZIndex.directionsOverlays.rawValue)
+                                        self?.animationPolyline?.map = self?.map
+                                    }
+                                } else {
+                                    self?.clear()
+                                }
+                            }
+                        }
+                    }, option: ValueAnimator.OptionBuilder().setDelay(0.1).setRepeatInfinitely(repeating).build())
                 self.valueAnimator?.callbackOnMainThread = true
                 self.valueAnimator?.resume()
             }

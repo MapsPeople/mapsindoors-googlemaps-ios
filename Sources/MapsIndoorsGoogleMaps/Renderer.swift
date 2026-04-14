@@ -12,21 +12,20 @@ actor Renderer {
     var is2dModelsEnabled = false
 
     var isFloorPlanEnabled = false
-    
-    
+
     func setIsModel2DEnabled(_ value: Bool) {
         is2dModelsEnabled = value
     }
-    
+
     func setIsFloorPlanEnabled(_ value: Bool) {
         isFloorPlanEnabled = value
     }
 
     // Keeping track of active view states (things in view)
     private var views = [String: ViewState]()
-    
+
     private let overlapEngine = OverlapEngine()
-    
+
     private var lock = AsyncSemaphore(value: 1)
 
     func setViewModels(models: [any MPViewModel], collision: MPCollisionHandling, forceClear: Bool) async throws {
@@ -50,23 +49,23 @@ actor Renderer {
 
         if let projection = await stage0AcquireProjection() {
             try Task.checkCancellation()
-            
+
             await stage1PurgeViewStates(noLongerInView: noLongerInView, forceClear: forceClear)
-            
+
             try Task.checkCancellation()
-            
+
             try await stage2ComputeDeltas(models: models)
-            
+
             try Task.checkCancellation()
-            
+
             let viewStatesInView = await computeViewStatesInView(ids: ids)
-            
+
             try Task.checkCancellation()
-            
+
             try await stage3OverlapDetection(collision: collision, projection: projection, inView: viewStatesInView)
-            
+
             try Task.checkCancellation()
-            
+
             try await stage4ApplyDeltas(inView: viewStatesInView)
         }
     }
@@ -96,7 +95,7 @@ actor Renderer {
                 }
                 views[id] = nil
             }
-            
+
             // Let the view model know that it is not visualized required atm.
             if let view = views[id] {
                 await view.setMarkedAsNoLongerInView()

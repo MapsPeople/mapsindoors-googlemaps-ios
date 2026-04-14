@@ -6,7 +6,7 @@ import GoogleMaps
 class Elem: NSObject {
     var min: (Float, Float) = (0.0, 0.0)
     var max: (Float, Float) = (0.0, 0.0)
-    
+
     let id: String
 
     required init(id: String, min: (Float, Float) = (0, 0), max: (Float, Float) = (0, 0)) {
@@ -39,26 +39,24 @@ class Elem: NSObject {
     override var description: String {
         return "Elem(min: \(min), max: \(max))"
     }
-
 }
 
 actor OverlapEngine {
-    
-    private let intersectionThreshold = 0.15 // percent
-    
+    private let intersectionThreshold = 0.15  // percent
+
     private var views = [ViewState]()
     private var projection: GMSProjection? = nil
 
     private let tree = Locked<GKQuadtree<Entry>?>(value: nil)
     private var entries = [String: Entry]()
 
-    init() { }
+    init() {}
 
     private func buildTree(viewStates: [ViewState]) async {
         tree.locked { tree in
             tree = GKQuadtree(boundingQuad: GKQuad(quadMin: vector_float2(-10_000, -10_000), quadMax: vector_float2(10_000, 10_000)), minimumCellSize: 18)
         }
-        
+
         for view in viewStates {
             guard let projection else { continue }
             let viewEntry = await Entry(viewState: view, projection: projection)
@@ -67,19 +65,17 @@ actor OverlapEngine {
         }
     }
 
-    /**
-     Run collision checks for each view state, against all other view states - and handle potential collisions by computing delta operations
-     */
+    /// Run collision checks for each view state, against all other view states - and handle potential collisions by computing delta operations
     func computeDeltas(views: [ViewState], projection: GMSProjection, overlapPolicy: MPCollisionHandling) async throws {
         guard overlapPolicy != .allowOverLap else { return }
-        
+
         self.views = views.sorted(by: { a, b in a.id < b.id })
         self.projection = projection
-        
+
         self.entries.removeAll(keepingCapacity: true)
-        
+
         await buildTree(viewStates: views)
-        
+
         for view in views {
             try Task.checkCancellation()
             if let current = self.entries[view.id], let bounds = await current.viewState.bounds {
@@ -98,12 +94,10 @@ actor OverlapEngine {
         }
     }
 
-    /**
-     Returns a (winner, loser)-tuple.
-     The winner is determined by the smallest geometry size (poiArea). In case they are equal - we use the lat/lng to determine a winner.
-     The most northern or the most eastern point wins.
-     If a viewstate is "selected", it should always be the winner!
-     */
+    /// Returns a (winner, loser)-tuple.
+    /// The winner is determined by the smallest geometry size (poiArea). In case they are equal - we use the lat/lng to determine a winner.
+    /// The most northern or the most eastern point wins.
+    /// If a viewstate is "selected", it should always be the winner!
     private func decideCollision(a: Entry, b: Entry) -> (Entry, Entry) {
         if a.viewState.forceRender.value == true { return (a, b) }
         if b.viewState.forceRender.value == true { return (b, a) }
@@ -125,11 +119,9 @@ actor OverlapEngine {
         return (a, b)
     }
 
-    /**
-     Decide what delta operations should be commited to view states in order to resolve the collision according to the set MPCollisionHandling.
-     Here we know that a collision has happened between two entries (and their underlying view states), so we remove them from the rtree -
-     make the necessary state mutations to resolve the conflict - and re-add them to the rtree (in order to update their hitbox representation).
-     */
+    /// Decide what delta operations should be commited to view states in order to resolve the collision according to the set MPCollisionHandling.
+    /// Here we know that a collision has happened between two entries (and their underlying view states), so we remove them from the rtree -
+    /// make the necessary state mutations to resolve the conflict - and re-add them to the rtree (in order to update their hitbox representation).
     private func resolveCollision(winnerEntry: Entry, loserEntry: Entry, overlapPolicy: MPCollisionHandling) async {
         await removeEntry(entry: winnerEntry)
         await removeEntry(entry: loserEntry)
@@ -154,13 +146,11 @@ actor OverlapEngine {
         let loser = await loserState.bounds ?? CGRect(x: -2000, y: -2000, width: 1, height: 1)
         if winner.intersects(with: loser, byAtLeast: intersectionThreshold) {
             if loserState.forceRender.value == true && winnerState.forceRender.value == true { return }
-            await winnerState.setMarkerState(state: .INVISIBLE)
+            await winnerState.setMarkerState(state: .invisible)
         }
     }
 
-    /**
-     Remove the icon(s) first, to attempt to resolve the collision - if that isn't enough, remove label(s)
-     */
+    /// Remove the icon(s) first, to attempt to resolve the collision - if that isn't enough, remove label(s)
     private func removeIconFirst(winnerState: ViewState, loserState: ViewState) async {
         var winner = await winnerState.bounds ?? CGRect(x: -1000, y: -1000, width: 1, height: 1)
         var loser = await loserState.bounds ?? CGRect(x: -2000, y: -2000, width: 1, height: 1)
@@ -172,74 +162,70 @@ actor OverlapEngine {
 
         // Attempt to remove the loser's icon
         if loserHasLabel {
-            await loserState.setMarkerState(state: .VISIBLE_LABEL)
+            await loserState.setMarkerState(state: .visibleLabel)
         }
         loser = await loserState.bounds ?? CGRect(x: -2000, y: -2000, width: 1, height: 1)
 
         // Check if that solved the collision
         if winner.intersects(with: loser, byAtLeast: intersectionThreshold) {
-            
             // Revert the loser, we will try to attempt solving the collision by tweaking the winner instaed
             await loserState.setMarkerState(state: losersOriginalState)
             loser = await loserState.bounds ?? CGRect(x: -2000, y: -2000, width: 1, height: 1)
-            
+
             // Attempt to remove the winner's label
             if winnerHasLabel {
-                await winnerState.setMarkerState(state: .VISIBLE_LABEL)
+                await winnerState.setMarkerState(state: .visibleLabel)
             }
-            
+
             winner = await winnerState.bounds ?? CGRect(x: -1000, y: -1000, width: 1, height: 1)
-            
+
             // Check if that solved the collision
             if winner.intersects(with: loser, byAtLeast: intersectionThreshold) {
                 // If not, pick the nuclear option and kill the loser
                 await winnerState.setMarkerState(state: winnersOriginalState)
-                await loserState.setMarkerState(state: .INVISIBLE)
+                await loserState.setMarkerState(state: .invisible)
             }
         }
     }
 
-    /**
-     Remove the label(s) first, to attempt to resolve the collision - if that isn't enough, remove icons(s)
-     */
+    /// Remove the label(s) first, to attempt to resolve the collision - if that isn't enough, remove icons(s)
     private func removeLabelFirst(winnerState: ViewState, loserState: ViewState) async {
         var winner = await winnerState.bounds ?? CGRect(x: -1000, y: -1000, width: 1, height: 1)
         var loser = await loserState.bounds ?? CGRect(x: -2000, y: -2000, width: 1, height: 1)
         let winnerHasIcon = await winnerState.markerState.isIconVisible
         let loserHasIcon = await loserState.markerState.isIconVisible
-        
+
         let winnersOriginalState = await winnerState.markerState
         let losersOriginalState = await loserState.markerState
 
         // Attempt to remove the loser's label
         if loserHasIcon {
-            await loserState.setMarkerState(state: .VISIBLE_ICON)
+            await loserState.setMarkerState(state: .visibleIcon)
         }
         loser = await loserState.bounds ?? CGRect(x: -2000, y: -2000, width: 1, height: 1)
 
         // Check if that solved the collision
         if winner.intersects(with: loser, byAtLeast: intersectionThreshold) {
-            
             // Revert the loser, we will try to attempt solving the collision by tweaking the winner instaed
             await loserState.setMarkerState(state: losersOriginalState)
             loser = await loserState.bounds ?? CGRect(x: -2000, y: -2000, width: 1, height: 1)
-            
+
             // Attempt to remove the winner's label
             if winnerHasIcon {
-                await winnerState.setMarkerState(state: .VISIBLE_ICON)
+                await winnerState.setMarkerState(state: .visibleIcon)
             }
-            
+
             winner = await winnerState.bounds ?? CGRect(x: -1000, y: -1000, width: 1, height: 1)
-            
+
             // Check if that solved the collision
             if winner.intersects(with: loser, byAtLeast: intersectionThreshold) {
                 // If not, pick the nuclear option and kill the loser
                 await winnerState.setMarkerState(state: winnersOriginalState)
-                await loserState.setMarkerState(state: .INVISIBLE)
+                await loserState.setMarkerState(state: .invisible)
             }
         }
     }
-    
+
     func addEntry(entry: Entry) async {
         if let bounds = await entry.viewState.bounds {
             // Add hit detection points for all four corners, edges and center
@@ -249,19 +235,18 @@ actor OverlapEngine {
                 let _2 = tree?.add(entry, at: bounds.gkBoundingBoxMax)
                 let _3 = tree?.add(entry, at: vector_float2(bounds.gkBoundingBoxMax.x, bounds.gkBoundingBoxMin.y))
                 let _4 = tree?.add(entry, at: vector_float2(bounds.gkBoundingBoxMin.x, bounds.gkBoundingBoxMax.y))
-                
+
                 // Center
                 let _5 = tree?.add(entry, at: vector_float2(bounds.gkBoundingBoxMax.x - bounds.gkBoundingBoxMin.x, bounds.gkBoundingBoxMax.y - bounds.gkBoundingBoxMin.y))
-                
+
                 // Four edge center points
-                let _6 = tree?.add(entry, at: vector_float2(bounds.gkBoundingBoxMin.x + ((bounds.gkBoundingBoxMax.x - bounds.gkBoundingBoxMin.x)/2), bounds.gkBoundingBoxMin.y))
-                let _7 = tree?.add(entry, at: vector_float2(bounds.gkBoundingBoxMin.x + ((bounds.gkBoundingBoxMax.x - bounds.gkBoundingBoxMin.x)/2), bounds.gkBoundingBoxMax.y))
-                let _8 = tree?.add(entry, at: vector_float2(bounds.gkBoundingBoxMin.x, bounds.gkBoundingBoxMin.y + ((bounds.gkBoundingBoxMax.y - bounds.gkBoundingBoxMin.y)/2)))
-                let _9 = tree?.add(entry, at: vector_float2(bounds.gkBoundingBoxMax.x, bounds.gkBoundingBoxMin.y + ((bounds.gkBoundingBoxMax.y - bounds.gkBoundingBoxMin.y)/2)))
-            
-                entry.nodes.append(contentsOf: [_1, _2, _3, _4, _5, _6, _7, _8, _9].compactMap { $0 } )
+                let _6 = tree?.add(entry, at: vector_float2(bounds.gkBoundingBoxMin.x + ((bounds.gkBoundingBoxMax.x - bounds.gkBoundingBoxMin.x) / 2), bounds.gkBoundingBoxMin.y))
+                let _7 = tree?.add(entry, at: vector_float2(bounds.gkBoundingBoxMin.x + ((bounds.gkBoundingBoxMax.x - bounds.gkBoundingBoxMin.x) / 2), bounds.gkBoundingBoxMax.y))
+                let _8 = tree?.add(entry, at: vector_float2(bounds.gkBoundingBoxMin.x, bounds.gkBoundingBoxMin.y + ((bounds.gkBoundingBoxMax.y - bounds.gkBoundingBoxMin.y) / 2)))
+                let _9 = tree?.add(entry, at: vector_float2(bounds.gkBoundingBoxMax.x, bounds.gkBoundingBoxMin.y + ((bounds.gkBoundingBoxMax.y - bounds.gkBoundingBoxMin.y) / 2)))
+
+                entry.nodes.append(contentsOf: [_1, _2, _3, _4, _5, _6, _7, _8, _9].compactMap { $0 })
             }
-            
         }
     }
 
@@ -272,7 +257,6 @@ actor OverlapEngine {
             }
         }
     }
-    
 }
 
 extension CGRect {
@@ -289,15 +273,14 @@ class Entry: NSObject {
     weak var viewState: ViewState!
     let id: String
     weak var projection: GMSProjection!
-    
+
     var nodes = [GKQuadtreeNode]()
-    
+
     required init(viewState: ViewState, projection: GMSProjection) async {
         self.viewState = viewState
         self.projection = projection
         id = viewState.id
     }
-
 }
 
 /// AI generated

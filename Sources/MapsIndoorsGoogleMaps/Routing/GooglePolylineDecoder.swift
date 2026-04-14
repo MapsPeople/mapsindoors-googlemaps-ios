@@ -8,15 +8,15 @@ extension String {
     }
 }
 
-fileprivate struct PolylineIterator: IteratorProtocol {
+private struct PolylineIterator: IteratorProtocol {
     typealias Element = CLLocationCoordinate2D
-    
+
     struct Coordinate {
         private var value = 0.0
         mutating func nextValue(
             polyline: String.UnicodeScalarView,
-            index: inout String.UnicodeScalarView.Index) -> Double? {
-
+            index: inout String.UnicodeScalarView.Index
+        ) -> Double? {
             if index >= polyline.endIndex {
                 return nil
             }
@@ -33,24 +33,24 @@ fileprivate struct PolylineIterator: IteratorProtocol {
                 res |= (byte & 0x1F) << shift
                 shift += 5
                 index = polyline.index(index, offsetBy: 1)
-            } while (byte >= 0x20 && index < polyline.endIndex)
+            } while byte >= 0x20 && index < polyline.endIndex
 
             self.value += Double(((res % 2) == 1) ? ~(res >> 1) : res >> 1)
 
             return self.value * 1E-5
         }
     }
-  
+
     private var polylineUnicodeChars: String.UnicodeScalarView
     private var current: String.UnicodeScalarView.Index
     private var latitude = Coordinate()
     private var longitude = Coordinate()
-  
+
     init(_ polyline: String) {
         self.polylineUnicodeChars = polyline.unicodeScalars
         self.current = self.polylineUnicodeChars.startIndex
     }
-  
+
     mutating func next() -> Element? {
         guard
             let lat = self.latitude.nextValue(polyline: self.polylineUnicodeChars, index: &self.current),
@@ -62,14 +62,10 @@ fileprivate struct PolylineIterator: IteratorProtocol {
     }
 }
 
-fileprivate struct PolylineSequence: Sequence {
+private struct PolylineSequence: Sequence {
     private let encodedPolyline: String
 
     init(_ encodedPolyline: String) throws {
-        var index = encodedPolyline.startIndex
-        encodedPolyline.unicodeScalars.forEach {_ in
-            index = encodedPolyline.index(index, offsetBy: 1)
-        }
         self.encodedPolyline = encodedPolyline
     }
 

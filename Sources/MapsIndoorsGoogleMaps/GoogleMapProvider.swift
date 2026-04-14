@@ -15,7 +15,7 @@ public class GoogleMapProvider: MPMapProvider {
     public var distanceMatrixService: MPExternalDistanceMatrixService {
         GMDistanceMatrixService(apiKey: googleApiKey! as String)
     }
-    
+
     public func invalidateRenderCache() {
         // nothing
     }
@@ -94,14 +94,16 @@ public class GoogleMapProvider: MPMapProvider {
         await configureMapsIndoorsModuleLicensing()
         do {
             try await renderer?.setViewModels(models: models, collision: collisionHandling, forceClear: forceClear)
-        } catch { /* do nothing */ }
+        } catch {
+            // do nothing
+        }
     }
 
     public var view: UIView? {
         mapView
     }
 
-    public var MPaccessibilityElementsHidden: Bool {
+    public var mpAccessibilityElementsHidden: Bool {
         get {
             mapView?.accessibilityElementsHidden ?? true
         }

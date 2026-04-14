@@ -3,80 +3,78 @@ import GoogleMaps
 @_spi(Private) import MapsIndoorsCore
 import UIKit
 
-/**
-  This enum defines which state changeing operations we have.
-  There exists a state operation for each mutable characteristic of a view model's features (marker, polygon)
- */
+/// This enum defines which state changeing operations we have.
+/// There exists a state operation for each mutable characteristic of a view model's features (marker, polygon)
 enum StateOperation {
-    case MARKER_VISIBLITY
-    case MARKER_ICON
-    case MARKER_POSITION
-    case MARKER_ANCHOR
-    case MARKER_CLICKABLE
+    case markerVisibility
+    case markerIcon
+    case markerPosition
+    case markerAnchor
+    case markerClickable
 
-    case POLYGON_VISIBILITY
-    case POLYGON_FILL_COLOR
-    case POLYGON_STROKE_COLOR
-    case POLYGON_STROKE_WIDTH
-    case POLYGON_GEOMETRY
-    case POLYGON_CLICKABLE
+    case polygonVisibility
+    case polygonFillColor
+    case polygonStrokeColor
+    case polygonStrokeWidth
+    case polygonGeometry
+    case polygonClickable
 
-    case FLOORPLAN_VISIBILITY
-    case FLOORPLAN_STROKE_COLOR
-    case FLOORPLAN_STROKE_WIDTH
-    case FLOORPLAN_FILL_COLOR
-    case FLOORPLAN_GEOMETRY
+    case floorplanVisibility
+    case floorplanStrokeColor
+    case floorplanStrokeWidth
+    case floorplanFillColor
+    case floorplanGeometry
 
-    case INFO_WINDOW
+    case infoWindow
 
-    case MODEL2D_VISIBILITY
-    case MODEL2D_IMAGE
-    case MODEL2D_POSITION
-    case MODEL2D_BEARING
-    case MODEL2D_CLICKABLE
+    case model2dVisibility
+    case model2dImage
+    case model2dPosition
+    case model2dBearing
+    case model2dClickable
 }
 
 enum MarkerState {
-    case UNDEFINED
-    case INVISIBLE
-    case VISIBLE_ICON
-    case VISIBLE_LABEL
-    case VISIBLE_ICON_LABEL
+    case undefined
+    case invisible
+    case visibleIcon
+    case visibleLabel
+    case visibleIconLabel
 
     var isVisible: Bool {
-        !(self == .INVISIBLE)
+        !(self == .invisible)
     }
 
     var isIconVisible: Bool {
-        self == .VISIBLE_ICON || self == .VISIBLE_ICON_LABEL
+        self == .visibleIcon || self == .visibleIconLabel
     }
 
     var isLabelVisible: Bool {
-        self == .VISIBLE_LABEL || self == .VISIBLE_ICON_LABEL
+        self == .visibleLabel || self == .visibleIconLabel
     }
 }
 
 enum Model2DState {
-    case UNDEFINED
-    case INVISIBLE
-    case VISIBLE
+    case undefined
+    case invisible
+    case visible
 
     var isVisible: Bool {
-        !(self == .INVISIBLE || self == .UNDEFINED)
+        !(self == .invisible || self == .undefined)
     }
 }
 
 enum Constants {
-    static let kMetersPerPixel = 0.014 // at 44°
+    static let kMetersPerPixel = 0.014  // at 44°
 }
 
 enum PolygonState {
-    case UNDEFINED
-    case INVISIBLE
-    case VISIBLE
+    case undefined
+    case invisible
+    case visible
 
     var isVisible: Bool {
-        self == .VISIBLE
+        self == .visible
     }
 }
 
@@ -85,9 +83,8 @@ enum PolygonState {
  If the "on-map" state of a feature differs from that of the view model, we compute a set of operations required to make the two states equal.
  */
 actor ViewState {
-    
     // Usefull debug flag, drawing a red box around a marker/label - which makes debugging collisions/clustering easier to visualize
-    static let DEBUG_DRAW_IMAGE_BORDER = false
+    static let debugDrawImageBorder = false
 
     private weak var map: GMSMapView?
     let id: String
@@ -101,7 +98,7 @@ actor ViewState {
     private nonisolated let polygons = LockedObject<[GMSPolygon]>(value: [])
     private nonisolated let floorPlanPolygons = LockedObject<[GMSPolygon]>(value: [])
     private nonisolated let overlay2D = LockedObject<GMSGroundOverlay?>(value: nil)
-    private nonisolated let InfoWindowAnchorPoint = LockedObject<CGPoint?>(value: nil)
+    private nonisolated let infoWindowAnchorPoint = LockedObject<CGPoint?>(value: nil)
 
     private var is2dModelsEnabled = false
 
@@ -111,11 +108,11 @@ actor ViewState {
     var shouldShowInfoWindow: Bool = false {
         didSet {
             shouldShowInfoWindowShadow.value = shouldShowInfoWindow
-            deltaOperations.value[.INFO_WINDOW] = { [weak self] map in
+            deltaOperations.value[.infoWindow] = { [weak self] map in
                 DispatchQueue.main.sync {
                     if self?.shouldShowInfoWindowShadow.value ?? false, map?.selectedMarker != self?.marker.value {
                         map?.selectedMarker = self?.marker.value
-                        if let anchor = self?.InfoWindowAnchorPoint.value {
+                        if let anchor = self?.infoWindowAnchorPoint.value {
                             self?.marker.value?.infoWindowAnchor = anchor
                         }
                     }
@@ -148,35 +145,27 @@ actor ViewState {
         markerState = state
     }
 
-    nonisolated let markerStateShadow = LockedObject<MarkerState>(value: .UNDEFINED)
-    var markerState: MarkerState = .UNDEFINED {
+    nonisolated let markerStateShadow = LockedObject<MarkerState>(value: .undefined)
+    var markerState: MarkerState = .undefined {
         didSet {
             markerStateShadow.value = markerState
             switch markerState {
-            case .VISIBLE_ICON_LABEL:
+            case .visibleIconLabel:
                 markerIcon = imageBundle?.both?.withDebugBox()
-            case .VISIBLE_ICON:
+            case .visibleIcon:
                 markerIcon = imageBundle?.icon?.withDebugBox()
-            case .VISIBLE_LABEL:
+            case .visibleLabel:
                 markerIcon = imageBundle?.label?.withDebugBox()
-            case .UNDEFINED:
-                fallthrough
-            case .INVISIBLE:
+            case .undefined, .invisible:
                 break
             }
 
-            deltaOperations.value[.MARKER_VISIBLITY] = { [weak self] map in
+            deltaOperations.value[.markerVisibility] = { [weak self] map in
                 DispatchQueue.main.sync {
                     switch self?.markerStateShadow.value {
-                    case .VISIBLE_ICON_LABEL:
-                        fallthrough
-                    case .VISIBLE_ICON:
-                        fallthrough
-                    case .VISIBLE_LABEL:
+                    case .visibleIconLabel, .visibleIcon, .visibleLabel:
                         self?.marker.value?.map = map
-                    case .UNDEFINED:
-                        fallthrough
-                    case .INVISIBLE:
+                    case .undefined, .invisible:
                         self?.marker.value?.map = nil
                     case .none:
                         return
@@ -190,7 +179,7 @@ actor ViewState {
     var markerAnchor: CGPoint = CGPoint(x: 0.5, y: 0.5) {
         didSet {
             markerAnchorShadow.value = markerAnchor
-            deltaOperations.value[.MARKER_ANCHOR] = { [weak self] _ in
+            deltaOperations.value[.markerAnchor] = { [weak self] _ in
                 DispatchQueue.main.sync {
                     guard self?.marker.value?.groundAnchor != self?.markerAnchorShadow.value else { return }
                     self?.marker.value?.groundAnchor = self?.markerAnchorShadow.value ?? CGPoint(x: 0.5, y: 0.5)
@@ -203,7 +192,7 @@ actor ViewState {
     var markerPosition: CLLocationCoordinate2D? {
         didSet {
             markerPositionShadow.value = markerPosition
-            deltaOperations.value[.MARKER_POSITION] = { [weak self] _ in
+            deltaOperations.value[.markerPosition] = { [weak self] _ in
                 DispatchQueue.main.sync {
                     guard let markerPosition = self?.markerPositionShadow.value, self?.marker.value?.position != markerPosition else { return }
                     self?.marker.value?.position = markerPosition
@@ -216,7 +205,7 @@ actor ViewState {
     var markerIcon: UIImage? {
         didSet {
             markerIconShadow.value = markerIcon
-            deltaOperations.value[.MARKER_ICON] = { [weak self] _ in
+            deltaOperations.value[.markerIcon] = { [weak self] _ in
                 DispatchQueue.main.sync {
                     guard self?.marker.value?.icon != self?.markerIconShadow.value, self?.markerIconShadow.value != nil else { return }
                     self?.marker.value?.icon = self?.markerIconShadow.value
@@ -229,7 +218,7 @@ actor ViewState {
     var markerClickable: Bool = false {
         didSet {
             markerClickableShadow.value = markerClickable
-            deltaOperations.value[.MARKER_CLICKABLE] = { [weak self] _ in
+            deltaOperations.value[.markerClickable] = { [weak self] _ in
                 DispatchQueue.main.sync {
                     self?.marker.value?.isTappable = self?.markerClickableShadow.value ?? false
                 }
@@ -238,20 +227,18 @@ actor ViewState {
     }
 
     // MARK: floorPlan
-    nonisolated let floorPlanStateShadow = LockedObject<PolygonState>(value: .UNDEFINED)
-    var floorPlanState: PolygonState = .UNDEFINED {
+    nonisolated let floorPlanStateShadow = LockedObject<PolygonState>(value: .undefined)
+    var floorPlanState: PolygonState = .undefined {
         didSet {
             floorPlanStateShadow.value = floorPlanState
-            deltaOperations.value[.FLOORPLAN_VISIBILITY] = { [weak self] map in
+            deltaOperations.value[.floorplanVisibility] = { [weak self] map in
                 DispatchQueue.main.sync {
                     switch self?.floorPlanStateShadow.value {
-                    case .VISIBLE:
+                    case .visible:
                         for wall in self?.floorPlanPolygons.value ?? [] {
                             wall.map = map
                         }
-                    case .UNDEFINED:
-                        fallthrough
-                    case .INVISIBLE:
+                    case .undefined, .invisible:
                         for wall in self?.floorPlanPolygons.value ?? [] {
                             wall.map = nil
                         }
@@ -267,7 +254,7 @@ actor ViewState {
     var floorPlanStrokeColor: UIColor? {
         didSet {
             floorPlanStrokeColorShadow.value = floorPlanStrokeColor
-            deltaOperations.value[.FLOORPLAN_STROKE_COLOR] = { [weak self] _ in
+            deltaOperations.value[.floorplanStrokeColor] = { [weak self] _ in
                 DispatchQueue.main.sync {
                     for floorPlan in self?.floorPlanPolygons.value ?? [] {
                         floorPlan.strokeColor = self?.floorPlanStrokeColorShadow.value
@@ -281,7 +268,7 @@ actor ViewState {
     var floorPlanStrokeWidth: Double? {
         didSet {
             floorPlanStrokeWidthShadow.value = floorPlanStrokeWidth
-            deltaOperations.value[.FLOORPLAN_STROKE_WIDTH] = { [weak self] _ in
+            deltaOperations.value[.floorplanStrokeWidth] = { [weak self] _ in
                 DispatchQueue.main.sync {
                     for floorPlan in self?.floorPlanPolygons.value ?? [] {
                         floorPlan.strokeWidth = CGFloat(self?.floorPlanStrokeWidthShadow.value ?? 0.0)
@@ -295,7 +282,7 @@ actor ViewState {
     var floorPlanFillColor: UIColor? {
         didSet {
             floorPlanFillColorShadow.value = floorPlanFillColor
-            deltaOperations.value[.FLOORPLAN_FILL_COLOR] = { [weak self] _ in
+            deltaOperations.value[.floorplanFillColor] = { [weak self] _ in
                 DispatchQueue.main.sync {
                     for floorPlan in self?.floorPlanPolygons.value ?? [] {
                         floorPlan.fillColor = self?.floorPlanFillColorShadow.value
@@ -309,25 +296,25 @@ actor ViewState {
     var floorPlanGeometries: [GMSPath]? {
         didSet {
             floorPlanGeometriesShadow.value = floorPlanGeometries ?? []
-            deltaOperations.value[.FLOORPLAN_GEOMETRY] = { [weak self] map in
+            deltaOperations.value[.floorplanGeometry] = { [weak self] map in
                 DispatchQueue.main.sync {
                     let upper = Double(MapOverlayZIndex.endFloorPlanRange.rawValue)
                     let lower = Double(MapOverlayZIndex.startFloorPlanRange.rawValue)
-                    let zindex = (abs(upper - (self?.poiArea.value ?? 0.0)).truncatingRemainder(dividingBy: lower) + lower) - 1 // -1 to ensure it is rendered below regular polygon geometry
-                    
+                    let zindex = (abs(upper - (self?.poiArea.value ?? 0.0)).truncatingRemainder(dividingBy: lower) + lower) - 1  // -1 to ensure it is rendered below regular polygon geometry
+
                     guard let floorPlanGeometries = self?.floorPlanGeometriesShadow.value, zindex.isFinite, zindex.isNaN == false else { return }
                     for geometry in floorPlanGeometries {
                         if self?.floorPlanPolygons.value.contains(where: { $0.path?.encodedPath() == geometry.encodedPath() }) ?? true { continue }
-                        
+
                         let floorPlanPolygon = GMSPolygon(path: geometry)
-                        
+
                         // To avoid having the polygon briefly with its default blue color, before our logic updates it (causes flashing) - we set a transparent color here
                         floorPlanPolygon.fillColor = self?.floorPlanFillColorShadow.value ?? .red.withAlphaComponent(0.0)
                         floorPlanPolygon.strokeColor = self?.floorPlanStrokeColorShadow.value ?? .red.withAlphaComponent(0.0)
                         floorPlanPolygon.strokeWidth = self?.floorPlanStrokeWidthShadow.value ?? 0.0
                         floorPlanPolygon.zIndex = Int32(Int(zindex))
                         self?.floorPlanPolygons.value.append(floorPlanPolygon)
-                        
+
                         // In order for the updated geometry to be reflected, we need to remove/re-add the map
                         if self?.floorPlanStateShadow.value.isVisible ?? false {
                             floorPlanPolygon.map = map
@@ -339,23 +326,21 @@ actor ViewState {
     }
 
     // MARK: Polygon
-    nonisolated let polygonStateShadow = LockedObject<PolygonState>(value: .UNDEFINED)
-    var polygonState: PolygonState = .UNDEFINED {
+    nonisolated let polygonStateShadow = LockedObject<PolygonState>(value: .undefined)
+    var polygonState: PolygonState = .undefined {
         didSet {
             polygonStateShadow.value = polygonState
-            deltaOperations.value[.POLYGON_VISIBILITY] = { [weak self] map in
+            deltaOperations.value[.polygonVisibility] = { [weak self] map in
                 DispatchQueue.main.sync {
                     for polygon in self?.polygons.value ?? [] {
                         polygon.userData = self?.id
                     }
                     switch self?.polygonStateShadow.value {
-                    case .VISIBLE:
+                    case .visible:
                         for polygon in self?.polygons.value ?? [] {
                             polygon.map = map
                         }
-                    case .UNDEFINED:
-                        fallthrough
-                    case .INVISIBLE:
+                    case .undefined, .invisible:
                         for polygon in self?.polygons.value ?? [] {
                             polygon.map = nil
                         }
@@ -371,7 +356,7 @@ actor ViewState {
     var polygonFillColor: UIColor? {
         didSet {
             polygonFillColorShadow.value = polygonFillColor
-            deltaOperations.value[.POLYGON_FILL_COLOR] = { [weak self] _ in
+            deltaOperations.value[.polygonFillColor] = { [weak self] _ in
                 DispatchQueue.main.sync {
                     for polygon in self?.polygons.value ?? [] {
                         polygon.fillColor = self?.polygonFillColorShadow.value
@@ -385,7 +370,7 @@ actor ViewState {
     var polygonStrokeColor: UIColor? {
         didSet {
             polygonStrokeColorShadow.value = polygonStrokeColor
-            deltaOperations.value[.POLYGON_STROKE_COLOR] = { [weak self] _ in
+            deltaOperations.value[.polygonStrokeColor] = { [weak self] _ in
                 DispatchQueue.main.sync {
                     for polygon in self?.polygons.value ?? [] {
                         polygon.strokeColor = self?.polygonStrokeColorShadow.value
@@ -399,7 +384,7 @@ actor ViewState {
     var polygonStrokeWidth: Double? {
         didSet {
             polygonStrokeWidthShadow.value = polygonStrokeWidth
-            deltaOperations.value[.POLYGON_STROKE_WIDTH] = { [weak self] _ in
+            deltaOperations.value[.polygonStrokeWidth] = { [weak self] _ in
                 DispatchQueue.main.sync {
                     for polygon in self?.polygons.value ?? [] {
                         polygon.strokeWidth = CGFloat(self?.polygonStrokeWidthShadow.value ?? 0.0)
@@ -413,25 +398,25 @@ actor ViewState {
     var polygonGeometries: [GMSPath]? {
         didSet {
             polygonGeometriesShadow.value = polygonGeometries ?? []
-            deltaOperations.value[.POLYGON_GEOMETRY] = { [weak self] map in
+            deltaOperations.value[.polygonGeometry] = { [weak self] map in
                 DispatchQueue.main.sync {
                     let upper = Double(MapOverlayZIndex.endPolygonsRange.rawValue)
                     let lower = Double(MapOverlayZIndex.startPolygonsRange.rawValue)
                     let zindex = abs(upper - (self?.poiArea.value ?? 0)).truncatingRemainder(dividingBy: lower) + lower
-                    
+
                     guard let polygonGeometries = self?.polygonGeometriesShadow.value, zindex.isFinite, zindex.isNaN == false else { return }
                     for geometry in polygonGeometries {
                         if self?.polygons.value.contains(where: { $0.path?.encodedPath() == geometry.encodedPath() }) ?? true { continue }
-                        
+
                         let polygon = GMSPolygon(path: geometry)
-                        
+
                         // To avoid having the polygon briefly with its default blue color, before our logic updates it (causes flashing) - we set a transparent color here
                         polygon.fillColor = self?.polygonFillColorShadow.value ?? .red.withAlphaComponent(0.0)
                         polygon.strokeColor = self?.polygonStrokeColorShadow.value ?? .red.withAlphaComponent(0.0)
                         polygon.strokeWidth = self?.polygonStrokeWidthShadow.value ?? 0.0
                         polygon.zIndex = Int32(Int(zindex))
                         self?.polygons.value.append(polygon)
-                        
+
                         // In order for the updated geometry to be reflected, we need to remove/re-add the map
                         if self?.polygonStateShadow.value.isVisible ?? false {
                             polygon.map = map
@@ -446,7 +431,7 @@ actor ViewState {
     var polygonClickable: Bool = false {
         didSet {
             polygonClickableShadow.value = polygonClickable
-            deltaOperations.value[.POLYGON_CLICKABLE] = { [weak self] _ in
+            deltaOperations.value[.polygonClickable] = { [weak self] _ in
                 DispatchQueue.main.sync {
                     for polygon in self?.polygons.value ?? [] {
                         polygon.isTappable = self?.polygonClickableShadow.value ?? false
@@ -458,19 +443,17 @@ actor ViewState {
 
     // MARK: 2D Model
 
-    private nonisolated let model2DStateShadow = LockedObject<Model2DState>(value: .UNDEFINED)
-    private var model2DState: Model2DState = .UNDEFINED {
+    private nonisolated let model2DStateShadow = LockedObject<Model2DState>(value: .undefined)
+    private var model2DState: Model2DState = .undefined {
         didSet {
             model2DStateShadow.value = model2DState
             if oldValue != model2DState {
-                deltaOperations.value[.MODEL2D_VISIBILITY] = { [weak self] map in
+                deltaOperations.value[.model2dVisibility] = { [weak self] map in
                     DispatchQueue.main.sync {
                         switch self?.model2DStateShadow.value {
-                        case .VISIBLE:
+                        case .visible:
                             self?.overlay2D.value?.map = map
-                        case .UNDEFINED:
-                            fallthrough
-                        case .INVISIBLE:
+                        case .undefined, .invisible:
                             self?.overlay2D.value?.map = nil
                         case .none:
                             return
@@ -485,7 +468,7 @@ actor ViewState {
     private var model2DPosition: CLLocationCoordinate2D? {
         didSet {
             model2DPositionShadow.value = model2DPosition
-            deltaOperations.value[.MODEL2D_POSITION] = { [weak self] _ in
+            deltaOperations.value[.model2dPosition] = { [weak self] _ in
                 DispatchQueue.main.sync {
                     guard let model2DPosition = self?.model2DPositionShadow.value, self?.overlay2D.value?.position != model2DPosition else { return }
                     self?.overlay2D.value?.position = model2DPosition
@@ -498,7 +481,7 @@ actor ViewState {
     private var model2DImage: UIImage? {
         didSet {
             model2DImageShadow.value = model2DImage
-            deltaOperations.value[.MODEL2D_IMAGE] = { [weak self] _ in
+            deltaOperations.value[.model2dImage] = { [weak self] _ in
                 DispatchQueue.main.sync {
                     var bounds: GMSCoordinateBounds?
                     if let model2DSouthWest = self?.model2DPositionShadow.value {
@@ -506,10 +489,10 @@ actor ViewState {
                         let model2DNorthEast = GMSGeometryOffset(model2DSouthEast, self?.model2DHeightMeters.value ?? 0, 0)
                         bounds = GMSCoordinateBounds(coordinate: model2DSouthWest, coordinate: model2DNorthEast)
                     }
-                    
+
                     self?.overlay2D.value?.bounds = bounds
                     self?.overlay2D.value?.icon = self?.model2DImageShadow.value
-                    
+
                     let upper = Double(MapOverlayZIndex.endModel2DRange.rawValue)
                     let lower = Double(MapOverlayZIndex.startModel2DRange.rawValue)
                     let zindex = abs(upper - (self?.poiArea.value ?? 0.0)).truncatingRemainder(dividingBy: lower) + lower
@@ -524,7 +507,7 @@ actor ViewState {
         didSet {
             model2DBearingShadow.value = model2DBearing
             if oldValue != model2DBearing {
-                deltaOperations.value[.MODEL2D_BEARING] = { [weak self] _ in
+                deltaOperations.value[.model2dBearing] = { [weak self] _ in
                     DispatchQueue.main.sync {
                         self?.overlay2D.value?.bearing = self?.model2DBearingShadow.value ?? 0.0
                     }
@@ -532,12 +515,12 @@ actor ViewState {
             }
         }
     }
-    
+
     private nonisolated let model2DClickableShadow = LockedObject<Bool>(value: false)
     var model2DClickable: Bool = false {
         didSet {
             model2DClickableShadow.value = model2DClickable
-            deltaOperations.value[.MODEL2D_CLICKABLE] = { [weak self] _ in
+            deltaOperations.value[.model2dClickable] = { [weak self] _ in
                 DispatchQueue.main.sync {
                     self?.overlay2D.value?.isTappable = self?.model2DClickableShadow.value ?? false
                 }
@@ -569,7 +552,7 @@ actor ViewState {
     private nonisolated let model2DHeightMeters = LockedObject<Double>(value: 0.0)
 
     private var latestModel: (any MPViewModel)?
-    
+
     @MainActor
     init(viewModel: any MPViewModel, map: GMSMapView, is2dModelEnabled: Bool, isFloorPlanEnabled: Bool) async {
         id = viewModel.id
@@ -591,30 +574,28 @@ actor ViewState {
     func calculateMarkerAnchor(markerSize: Double, iconSize: Double, anchor: Double) -> Double {
         (iconSize * anchor) / markerSize
     }
-    
+
     /// If the view state is no longer in view, it may still be cached - but we remove the marker icon, to ease the memory load on the Maps SDK
     func setMarkedAsNoLongerInView() {
         self.markerIcon = nil
         self.model2DImage = nil
     }
 
-    /**
-     Computes the set of state operations required to have the view state's properties reflect those in the view model.
-     This is done by assigning model values to the view state's corresponding property. Upon each property assignment, it check
-     whether the value has changed - and a function is created to accommodate this change property and reflect the changes on corresponding map feature.
-     */
+    /// Computes the set of state operations required to have the view state's properties reflect those in the view model.
+    /// This is done by assigning model values to the view state's corresponding property. Upon each property assignment, it check
+    /// whether the value has changed - and a function is created to accommodate this change property and reflect the changes on corresponding map feature.
     func computeDelta(newModel: any MPViewModel) {
         lastTimeTag = CFAbsoluteTimeGetCurrent()
         deltaOperations.value.removeAll()
         infoWindowText.value = newModel.marker?.properties[.markerLabelInfoWindow] as? String
         markerState = newModel.markerState
-        
+
         computeMarkerState(newModel: newModel)
 
         shouldShowInfoWindow = newModel.showInfoWindow
 
         polygonState = newModel.polygonState
-        if polygonState.isVisible || polygonState == .UNDEFINED {
+        if polygonState.isVisible || polygonState == .undefined {
             if let fillColor = newModel.polygonFillColor {
                 polygonFillColor = fillColor
             }
@@ -630,7 +611,7 @@ actor ViewState {
 
         if isFloorPlanEnabled {
             floorPlanState = newModel.floorPlanState
-            if floorPlanState.isVisible || floorPlanState == .UNDEFINED {
+            if floorPlanState.isVisible || floorPlanState == .undefined {
                 floorPlanStrokeColor = newModel.floorPlanStrokeColor
                 floorPlanStrokeWidth = newModel.floorPlanStrokeWidth
                 floorPlanFillColor = newModel.floorPlanFillColor
@@ -640,19 +621,20 @@ actor ViewState {
 
         if is2dModelsEnabled {
             model2DState = newModel.model2DState
-            if model2DState.isVisible || model2DState == .UNDEFINED {
+            if model2DState.isVisible || model2DState == .undefined {
                 if let bundle = newModel.model2DBundle {
                     if let mapView = map, let image = bundle.icon {
                         let zoom = Int(mapView.camera.zoom)
-                        let scaleFactor = switch zoom {
-                        case 21: 1.0
-                        case 20: 0.9
-                        case 19: 0.6
-                        case 18: 0.4
-                        case 17: 0.2
-                        default:
-                            0.1
-                        }
+                        let scaleFactor =
+                            switch zoom {
+                            case 21: 1.0
+                            case 20: 0.9
+                            case 19: 0.6
+                            case 18: 0.4
+                            case 17: 0.2
+                            default:
+                                0.1
+                            }
 
                         let newMaxDimension = max(image.size.width, image.size.height) * CGFloat(scaleFactor)
 
@@ -678,9 +660,9 @@ actor ViewState {
             }
         }
     }
-    
+
     private func computeMarkerState(newModel: any MPViewModel) {
-        if markerState.isVisible || markerState == .UNDEFINED {
+        if markerState.isVisible || markerState == .undefined {
             if let bundle = newModel.iconLabelBundle {
                 if let image = bundle.both {
                     markerIcon = image
@@ -696,16 +678,16 @@ actor ViewState {
                     forceRender.value = false
                 }
 
-                if let size = bundle.getSize(state: .VISIBLE_ICON_LABEL) {
+                if let size = bundle.getSize(state: .visibleIconLabel) {
                     let anchorX = calculateMarkerAnchor(markerSize: size.width, iconSize: bundle.iconSize.width, anchor: 0.5)
 
                     if markerState.isIconVisible, markerState.isLabelVisible {
                         markerAnchor = CGPoint(x: anchorX, y: 0.5)
-                        InfoWindowAnchorPoint.value = CGPoint(x: anchorX, y: 0)
+                        infoWindowAnchorPoint.value = CGPoint(x: anchorX, y: 0)
                         DispatchQueue.main.async {
                             if newModel.marker?.properties[.isCollidable] as? Bool == false {
                                 if self.markerState.isLabelVisible || self.markerState.isIconVisible {
-                                    self.InfoWindowAnchorPoint.value = CGPoint(x: anchorX, y: 0)
+                                    self.infoWindowAnchorPoint.value = CGPoint(x: anchorX, y: 0)
                                 }
                             }
                         }
@@ -721,7 +703,8 @@ actor ViewState {
                         }
 
                         if let iconPlacement = newModel.marker?.properties[.markerIconPlacement] as? String,
-                           let labelPlacement = newModel.marker?.properties[.labelAnchor] as? String {
+                            let labelPlacement = newModel.marker?.properties[.labelAnchor] as? String
+                        {
                             switch iconPlacement {
                             case "bottom":
                                 switch labelPlacement {
@@ -742,7 +725,6 @@ actor ViewState {
                                 markerAnchor = CGPoint(x: anchorX, y: 0.5)
                             }
                         }
-
                     } else if markerState.isIconVisible {
                         DispatchQueue.main.async {
                             self.marker.value?.infoWindowAnchor = CGPoint(x: 0.5, y: 0)
@@ -772,51 +754,46 @@ actor ViewState {
                 poiArea.value = area as? Double ?? 0.0
             }
         }
-        
     }
 
     private func ratio(a: Double, b: Double) -> Double {
         min(a, b) / max(a, b)
     }
 
-    /**
-     Executes the set of state operations, computed to "catch up" with the state of the latest view model
-     */
+    /// Executes the set of state operations, computed to "catch up" with the state of the latest view model
     func applyDelta() async {
         let renderOperationsInOrder: [StateOperation] = [
-            .MARKER_ANCHOR,
-            .MARKER_ICON,
-            .MARKER_VISIBLITY,
-            .MARKER_POSITION,
-            .MARKER_CLICKABLE,
-            .INFO_WINDOW,
-            .POLYGON_STROKE_WIDTH,
-            .POLYGON_FILL_COLOR,
-            .POLYGON_STROKE_COLOR,
-            .POLYGON_VISIBILITY,
-            .POLYGON_GEOMETRY,
-            .POLYGON_CLICKABLE,
-            .FLOORPLAN_STROKE_WIDTH,
-            .FLOORPLAN_STROKE_COLOR,
-            .FLOORPLAN_VISIBILITY,
-            .FLOORPLAN_GEOMETRY,
-            .MODEL2D_IMAGE,
-            .MODEL2D_BEARING,
-            .MODEL2D_VISIBILITY,
-            .MODEL2D_POSITION,
-            .MODEL2D_CLICKABLE
+            .markerAnchor,
+            .markerIcon,
+            .markerVisibility,
+            .markerPosition,
+            .markerClickable,
+            .infoWindow,
+            .polygonStrokeWidth,
+            .polygonFillColor,
+            .polygonStrokeColor,
+            .polygonVisibility,
+            .polygonGeometry,
+            .polygonClickable,
+            .floorplanStrokeWidth,
+            .floorplanStrokeColor,
+            .floorplanVisibility,
+            .floorplanGeometry,
+            .model2dImage,
+            .model2dBearing,
+            .model2dVisibility,
+            .model2dPosition,
+            .model2dClickable,
         ]
 
-         for operationType in renderOperationsInOrder {
-             if let operation = deltaOperations.value[operationType] {
-                 operation(self.map)
-             }
-         }
+        for operationType in renderOperationsInOrder {
+            if let operation = deltaOperations.value[operationType] {
+                operation(self.map)
+            }
+        }
     }
 
-    /**
-     Removes all map features from the mapview
-      */
+    /// Removes all map features from the mapview
     @MainActor
     func destroy() async {
         marker.value?.icon = nil
@@ -865,13 +842,13 @@ class IconLabelBundle {
 
     func getSize(state: MarkerState) -> CGSize? {
         switch state {
-        case .INVISIBLE:
+        case .invisible:
             nil
-        case .VISIBLE_ICON:
+        case .visibleIcon:
             iconSize
-        case .VISIBLE_LABEL:
+        case .visibleLabel:
             labelSize
-        case .VISIBLE_ICON_LABEL:
+        case .visibleIconLabel:
             both?.size
         default:
             nil
@@ -881,7 +858,7 @@ class IconLabelBundle {
     private func compile(icon: UIImage?, label: UIImage?, position: MPLabelPosition) -> UIImage? {
         let respectDistance = CGFloat(3)
         let format = UIGraphicsImageRendererFormat.preferred()
-        format.opaque = false // true = no alpha channel, for debugging
+        format.opaque = false  // true = no alpha channel, for debugging
 
         // Early return if neither are set
         guard let icon, let label else {
@@ -922,25 +899,23 @@ class IconLabelBundle {
     }
 }
 
-/**
- Convenience extensions for view models, useful in the ViewState class' logic
- */
+/// Convenience extensions for view models, useful in the ViewState class' logic
 extension MPViewModel {
     var markerState: MarkerState {
         if let feature = marker {
             let hasLabel = feature.properties[.markerLabel] != nil
             let hasIcon = (data[.icon] as? UIImage) != nil
             if hasIcon, hasLabel {
-                return .VISIBLE_ICON_LABEL
+                return .visibleIconLabel
             }
             if hasIcon {
-                return .VISIBLE_ICON
+                return .visibleIcon
             }
             if hasLabel {
-                return .VISIBLE_LABEL
+                return .visibleLabel
             }
         }
-        return .INVISIBLE
+        return .invisible
     }
 
     var markerPosition: CLLocationCoordinate2D? {
@@ -955,12 +930,12 @@ extension MPViewModel {
             let hasGeometry = polygonGeometries.isEmpty == false
             let hasArea = feature.properties[.polygonArea] as? Double != nil
             if hasGeometry, hasArea {
-                return .VISIBLE
+                return .visible
             } else {
-                return .INVISIBLE
+                return .invisible
             }
         }
-        return .INVISIBLE
+        return .invisible
     }
 
     var polygonGeometries: [GMSPath] {
@@ -994,9 +969,9 @@ extension MPViewModel {
     var floorPlanState: PolygonState {
         let hasfloorPlan = floorPlanGeometries.isEmpty == false
         if hasfloorPlan {
-            return .VISIBLE
+            return .visible
         } else {
-            return .INVISIBLE
+            return .invisible
         }
     }
 
@@ -1071,16 +1046,17 @@ extension MPViewModel {
         var labelPosition: MPLabelPosition = .right
 
         if let position = marker?.properties[.labelAnchor] as? String {
-            labelPosition = switch position {
-            case "left":
-                .right
-            case "top":
-                .bottom
-            case "bottom":
-                .top
-            default:
-                .left
-            }
+            labelPosition =
+                switch position {
+                case "left":
+                    .right
+                case "top":
+                    .bottom
+                case "bottom":
+                    .top
+                default:
+                    .left
+                }
         }
 
         return IconLabelBundle(icon: iconImage, label: labelImage, labelPosition: labelPosition)
@@ -1089,20 +1065,21 @@ extension MPViewModel {
     // MARK: 2D Model
 
     var model2DBundle: Model2DBundle? {
-        Model2DBundle(icon: computedImage,
-                      widthMeters: (model2D?.properties[.model2DWidth] as? Double) ?? 0,
-                      heightMeters: (model2D?.properties[.model2DHeight] as? Double) ?? 0)
+        Model2DBundle(
+            icon: computedImage,
+            widthMeters: (model2D?.properties[.model2DWidth] as? Double) ?? 0,
+            heightMeters: (model2D?.properties[.model2DHeight] as? Double) ?? 0)
     }
 
     var model2DState: Model2DState {
         if let hasIcon = (data[.model2D] as? UIImage) {
             if hasIcon != nil as UIImage? {
-                return .VISIBLE
+                return .visible
             } else {
-                return .INVISIBLE
+                return .invisible
             }
         }
-        return .INVISIBLE
+        return .invisible
     }
 
     var model2DPosition: CLLocationCoordinate2D? {
@@ -1122,14 +1099,14 @@ extension MPViewModel {
     // for 2D Model
     var computedImage: UIImage? {
         switch model2DState {
-        case .UNDEFINED:
-            fallthrough
-        case .INVISIBLE:
+        case .undefined, .invisible:
             return nil
-        case .VISIBLE:
+        case .visible:
             if let image = data[.model2D] as? UIImage {
                 return image
-            } else { return nil }
+            } else {
+                return nil
+            }
         }
     }
 
@@ -1145,13 +1122,14 @@ extension MPViewModel {
         var attrs: [NSAttributedString.Key: Any] = [.paragraphStyle: paragraphStyle]
 
         guard let string = (marker?.properties[.markerLabel] as? String),
-              let fontSize = marker?.properties[.labelSize] as? Int,
-              let fontName = marker?.properties[.labelFont] as? String,
-              let fontColor = marker?.properties[.labelColor] as? String,
-              let fontOpacity = marker?.properties[.labelOpacity] as? Double,
-              let haloWidth = marker?.properties[.labelHaloWidth] as? Int,
-              let haloColor = marker?.properties[.labelHaloColor] as? String,
-              let haloBlur = marker?.properties[.labelHaloBlur] as? Int else { return nil }
+            let fontSize = marker?.properties[.labelSize] as? Int,
+            let fontName = marker?.properties[.labelFont] as? String,
+            let fontColor = marker?.properties[.labelColor] as? String,
+            let fontOpacity = marker?.properties[.labelOpacity] as? Double,
+            let haloWidth = marker?.properties[.labelHaloWidth] as? Int,
+            let haloColor = marker?.properties[.labelHaloColor] as? String,
+            let haloBlur = marker?.properties[.labelHaloBlur] as? Int
+        else { return nil }
 
         attrs[.font] = UIFont(name: fontName, size: CGFloat(fontSize))
         attrs[.foregroundColor] = UIColor(hex: fontColor)?.withAlphaComponent(CGFloat(fontOpacity))
@@ -1172,16 +1150,18 @@ extension MPViewModel {
     }
 
     func labelSplitAndSizing(string: String, width: Double, att: [NSAttributedString.Key: Any]) -> CGSize {
-        NSString(string: string).boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
-                                              options: NSStringDrawingOptions.usesLineFragmentOrigin,
-                                              attributes: att,
-                                              context: nil).size
+        NSString(string: string).boundingRect(
+            with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: NSStringDrawingOptions.usesLineFragmentOrigin,
+            attributes: att,
+            context: nil
+        ).size
     }
 }
 
-private extension UIImage {
-    func withDebugBox(color _: UIColor = .red) -> UIImage {
-        guard ViewState.DEBUG_DRAW_IMAGE_BORDER == true else { return self }
+extension UIImage {
+    fileprivate func withDebugBox(color _: UIColor = .red) -> UIImage {
+        guard ViewState.debugDrawImageBorder == true else { return self }
         let size = CGSize(width: size.width, height: size.height)
         guard size != .zero else { return self }
         let format = UIGraphicsImageRendererFormat.preferred()
@@ -1196,7 +1176,7 @@ private extension UIImage {
         return img
     }
 
-    func resizeImage(scaleSize: CGFloat) -> UIImage? {
+    fileprivate func resizeImage(scaleSize: CGFloat) -> UIImage? {
         var size = size
 
         guard self.size.width <= scaleSize, self.size.height <= scaleSize else {
@@ -1244,14 +1224,13 @@ private extension UIImage {
 
 // The "old", inefficient way
 class LockedObject<T> {
-    
     private var obj: T
     private let lock = NSLock()
-    
+
     public required init(value: T) {
         self.obj = value
     }
-    
+
     public var value: T {
         get {
             lock.withLock {
@@ -1264,5 +1243,4 @@ class LockedObject<T> {
             }
         }
     }
-
 }

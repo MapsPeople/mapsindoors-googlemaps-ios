@@ -14,7 +14,7 @@ class PathSmoother {
             return GMSMutablePath(path: path)
         }
 
-        for i in 1 ..< path.count() - 1 {
+        for i in 1..<path.count() - 1 {
             let p0 = smoothPath.coordinate(at: smoothPath.count() - 1)
             let p1 = path.coordinate(at: i)
             let p2 = path.coordinate(at: i + 1)

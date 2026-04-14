@@ -17,10 +17,11 @@ class GMProjection: MPProjection {
     var visibleRegion: MPGeoRegion {
         @MainActor
         get async {
-            MPGeoRegion(nearLeft: projection?.visibleRegion().nearLeft ?? CLLocationCoordinate2D(),
-                        farLeft: projection?.visibleRegion().farLeft ?? CLLocationCoordinate2D(),
-                        farRight: projection?.visibleRegion().farRight ?? CLLocationCoordinate2D(),
-                        nearRight: projection?.visibleRegion().nearRight ?? CLLocationCoordinate2D())
+            MPGeoRegion(
+                nearLeft: projection?.visibleRegion().nearLeft ?? CLLocationCoordinate2D(),
+                farLeft: projection?.visibleRegion().farLeft ?? CLLocationCoordinate2D(),
+                farRight: projection?.visibleRegion().farRight ?? CLLocationCoordinate2D(),
+                nearRight: projection?.visibleRegion().nearRight ?? CLLocationCoordinate2D())
         }
     }
 

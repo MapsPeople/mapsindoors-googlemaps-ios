@@ -1,3 +1,4 @@
+// swift-format-ignore-file: AlwaysUseLowerCamelCase
 import Foundation
 import GoogleMaps
 import MapsIndoors
@@ -55,7 +56,7 @@ struct GoogleRoute: Codable {
             mpLeg.start_address = googleLeg.startAddress ?? ""
             mpLeg.end_address = googleLeg.endAddress ?? ""
 
-            googleLeg.steps?.forEach { googleStep in
+            for googleStep in googleLeg.steps ?? [] {
                 mpLeg.addStep(mpStepFrom(googleStep: googleStep))
             }
 
