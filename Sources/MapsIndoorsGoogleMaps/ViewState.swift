@@ -584,11 +584,11 @@ actor ViewState {
     /// Computes the set of state operations required to have the view state's properties reflect those in the view model.
     /// This is done by assigning model values to the view state's corresponding property. Upon each property assignment, it check
     /// whether the value has changed - and a function is created to accommodate this change property and reflect the changes on corresponding map feature.
-    func computeDelta(newModel: any MPViewModel) {
+    func computeDelta(newModel: any MPViewModel, showMapMarkers: Bool? = nil) {
         lastTimeTag = CFAbsoluteTimeGetCurrent()
         deltaOperations.value.removeAll()
         infoWindowText.value = newModel.marker?.properties[.markerLabelInfoWindow] as? String
-        markerState = newModel.markerState
+        markerState = showMapMarkers == false ? .invisible : newModel.markerState
 
         computeMarkerState(newModel: newModel)
 

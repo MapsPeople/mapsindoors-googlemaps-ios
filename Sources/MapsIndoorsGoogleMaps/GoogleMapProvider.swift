@@ -29,19 +29,18 @@ public class GoogleMapProvider: MPMapProvider {
     private var tileProvider: GMTileProvider?
 
     public var collisionHandling: MPCollisionHandling = .allowOverLap
+    public var showMapMarkers: Bool? = nil {
+        didSet {
+            let value = showMapMarkers
+            Task { await renderer?.setShowMapMarkers(value) }
+        }
+    }
 
     public var cameraOperator: MPCameraOperator {
         GMCameraOperator(gmsView: mapView)
     }
 
-    public var routeRenderer: MPRouteRenderer {
-        if _routeRenderer != nil {
-            return _routeRenderer!
-        } else {
-            _routeRenderer = GMRouteRenderer(map: mapView)
-            return _routeRenderer!
-        }
-    }
+    public var routeRenderer: MPRouteRenderer { _routeRenderer! }
 
     @MainActor
     public func setTileProvider(tileProvider: MPTileProvider) async {
@@ -72,12 +71,15 @@ public class GoogleMapProvider: MPMapProvider {
     public init(mapView: GMSMapView, googleApiKey: String? = nil) {
         self.mapView = mapView
         renderer = Renderer(map: self.mapView)
+        _routeRenderer = GMRouteRenderer(map: self.mapView)
 
         self.mapView?.isBuildingsEnabled = false
         self.mapView?.isIndoorEnabled = false
         self.mapView?.setMinZoom(1, maxZoom: 21)
 
         self.googleApiKey = googleApiKey
+
+        MPLogger.sharedInstance.setMapProviderLogIdentity(GMProviderLogIdentity())
 
         positionPresenter = GMPositionPresenter(map: mapView)
 
