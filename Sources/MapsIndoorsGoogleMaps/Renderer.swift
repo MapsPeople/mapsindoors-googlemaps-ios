@@ -11,7 +11,6 @@ actor Renderer {
 
     var is2dModelsEnabled = false
     var isFloorPlanEnabled = false
-    var showMapMarkers: Bool? = nil
 
     func setIsModel2DEnabled(_ value: Bool) {
         is2dModelsEnabled = value
@@ -19,10 +18,6 @@ actor Renderer {
 
     func setIsFloorPlanEnabled(_ value: Bool) {
         isFloorPlanEnabled = value
-    }
-
-    func setShowMapMarkers(_ value: Bool?) {
-        showMapMarkers = value
     }
 
     // Keeping track of active view states (things in view)
@@ -115,11 +110,11 @@ actor Renderer {
             try Task.checkCancellation()
             // Compute delta between view state and view model, if one exists
             if let view = self.views[model.id] {
-                await view.computeDelta(newModel: model, showMapMarkers: showMapMarkers)
+                await view.computeDelta(newModel: model)
             } else {
                 // Otherwise, create view state
                 let view = await self.initViewState(viewModel: model, map: map)
-                await view.computeDelta(newModel: model, showMapMarkers: showMapMarkers)
+                await view.computeDelta(newModel: model)
                 self.views[model.id] = view
             }
         }

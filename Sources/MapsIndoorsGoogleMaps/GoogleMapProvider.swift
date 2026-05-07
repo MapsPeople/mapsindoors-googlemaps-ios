@@ -29,12 +29,6 @@ public class GoogleMapProvider: MPMapProvider {
     private var tileProvider: GMTileProvider?
 
     public var collisionHandling: MPCollisionHandling = .allowOverLap
-    public var showMapMarkers: Bool? = nil {
-        didSet {
-            let value = showMapMarkers
-            Task { await renderer?.setShowMapMarkers(value) }
-        }
-    }
 
     public var cameraOperator: MPCameraOperator {
         GMCameraOperator(gmsView: mapView)
