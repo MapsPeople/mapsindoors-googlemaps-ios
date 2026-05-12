@@ -1,4 +1,5 @@
 // swift-format-ignore-file: AlwaysUseLowerCamelCase
+
 import Foundation
 import GoogleMaps
 import MapsIndoors

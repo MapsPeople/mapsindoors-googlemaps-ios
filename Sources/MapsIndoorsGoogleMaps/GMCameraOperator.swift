@@ -2,10 +2,11 @@ import Foundation
 import GoogleMaps
 import MapsIndoorsCore
 
+@MainActor
 class GMCameraOperator: MPCameraOperator {
     private weak var map: GMSMapView?
 
-    required init(gmsView: GMSMapView?) {
+    nonisolated required init(gmsView: GMSMapView?) {
         map = gmsView
     }
 
@@ -56,24 +57,17 @@ class GMCameraOperator: MPCameraOperator {
     }
 
     var projection: MPProjection {
-        @MainActor
         get async {
             GMProjection(projection: self.map?.projection)
         }
     }
 
     func camera(for bounds: MPGeoBounds, inserts: UIEdgeInsets) -> MPCameraPosition {
-        var googleCameraForBounds = GMSCameraPosition()
-
-        if Thread.isMainThread {
-            let googleBound = GMSCoordinateBounds(coordinate: bounds.northEast, coordinate: bounds.southWest)
-            googleCameraForBounds = map?.camera(for: googleBound, insets: inserts) ?? GMSCameraPosition(latitude: 0, longitude: 0, zoom: 5)
-        } else {
-            DispatchQueue.main.sync {
-                let googleBound = GMSCoordinateBounds(coordinate: bounds.northEast, coordinate: bounds.southWest)
-                googleCameraForBounds = self.map?.camera(for: googleBound, insets: inserts) ?? GMSCameraPosition(latitude: 0, longitude: 0, zoom: 5)
-            }
-        }
+        // `@MainActor` at the type level guarantees we run on the main thread,
+        // so the previous `Thread.isMainThread` / `DispatchQueue.main.sync`
+        // fallback is unreachable.
+        let googleBound = GMSCoordinateBounds(coordinate: bounds.northEast, coordinate: bounds.southWest)
+        let googleCameraForBounds = map?.camera(for: googleBound, insets: inserts) ?? GMSCameraPosition(latitude: 0, longitude: 0, zoom: 5)
 
         let googleMutableCameraPosition = GMSMutableCameraPosition(target: googleCameraForBounds.target, zoom: googleCameraForBounds.zoom, bearing: googleCameraForBounds.bearing, viewingAngle: googleCameraForBounds.viewingAngle)
         return GMCameraPosition(cameraPosition: googleMutableCameraPosition)

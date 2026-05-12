@@ -7,6 +7,7 @@ import MapsIndoorsCore
  Defines a mapping between Earth coordinates (CLLocationCoordinate2D) and coordinates in the map's view (CGPoint).
  */
 
+@MainActor
 class GMProjection: MPProjection {
     private let projection: GMSProjection?
 
@@ -15,7 +16,6 @@ class GMProjection: MPProjection {
     }
 
     var visibleRegion: MPGeoRegion {
-        @MainActor
         get async {
             MPGeoRegion(
                 nearLeft: projection?.visibleRegion().nearLeft ?? CLLocationCoordinate2D(),
@@ -25,12 +25,10 @@ class GMProjection: MPProjection {
         }
     }
 
-    @MainActor
     func coordinateFor(point: CGPoint) async -> CLLocationCoordinate2D {
         projection?.coordinate(for: point) ?? CLLocationCoordinate2D()
     }
 
-    @MainActor
     func pointFor(coordinate: CLLocationCoordinate2D) async -> CGPoint {
         projection?.point(for: coordinate) ?? .zero
     }
