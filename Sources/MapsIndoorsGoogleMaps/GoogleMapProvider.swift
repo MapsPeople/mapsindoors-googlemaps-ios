@@ -73,8 +73,6 @@ public class GoogleMapProvider: MPMapProvider {
 
         self.googleApiKey = googleApiKey
 
-        MPLogger.sharedInstance.setMapProviderLogIdentity(GMProviderLogIdentity())
-
         positionPresenter = GMPositionPresenter(map: mapView)
 
         cameraPosition = GMCameraPosition(cameraPosition: GMSMutableCameraPosition())
@@ -116,6 +114,15 @@ public class GoogleMapProvider: MPMapProvider {
             mapView?.padding = newValue
         }
     }
+
+    /// `GMSMapView.padding` is consulted by every Google Maps camera
+    /// operation automatically — `map.animate(to:)`,
+    /// `GMSCameraUpdate.fit(_:)`, `map.camera(for:insets:)`, etc. —
+    /// so the engine itself handles ``MPMapControl/mapPadding`` for
+    /// every camera move. Callers that pre-combine `mapPadding` into
+    /// a per-operation padding value must omit it on this provider
+    /// to avoid double-application.
+    public var appliesPaddingGlobally: Bool { true }
 
     // Unused
     public var wallExtrusionOpacity: Double = 0

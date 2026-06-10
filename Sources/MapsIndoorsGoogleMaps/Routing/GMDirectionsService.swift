@@ -58,7 +58,24 @@ class GMDirectionsService: MPExternalDirectionsService {
         self.apiKey = apiKey
     }
 
+    /// Queries the Routes API first; the legacy Directions API is only used
+    /// when the key cannot call the Routes API (403) — new Google projects
+    /// cannot enable the legacy APIs at all (SPEX-1905).
     func query(origin: CLLocationCoordinate2D, destination: CLLocationCoordinate2D, config: MPDirectionsConfig) async throws -> MPRoute? {
+        if GMGoogleRoutingCapability.state(for: apiKey) != .legacyOnly {
+            do {
+                let response = try await GMRoutesService(apiKey: apiKey).computeRoute(origin: origin, destination: destination, config: config)
+                GMGoogleRoutingCapability.set(.routesAvailable, for: apiKey)
+                return response.routes.first?.asMPRoute
+            } catch GMRoutesServiceError.notAuthorized {
+                MPLog.google.info("Routes API not authorized for this key — falling back to the legacy Directions API.")
+                GMGoogleRoutingCapability.set(.legacyOnly, for: apiKey)
+            }
+        }
+        return try await legacyQuery(origin: origin, destination: destination, config: config)
+    }
+
+    private func legacyQuery(origin: CLLocationCoordinate2D, destination: CLLocationCoordinate2D, config: MPDirectionsConfig) async throws -> MPRoute? {
         let url = buildUrl(origin: origin, destination: destination, config: config)
         let (data, _) = try await URLSession.shared.data(from: url)
         let deserializedResponse = try JSONDecoder().decode(GoogleRouteResponse.self, from: data)

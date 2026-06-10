@@ -164,12 +164,12 @@ class GMRouteRenderer: MPRouteRenderer {
 
         switch fitMode {
         case .northAligned:
-            let pos = createCameraPosition(for: bounds.center.coordinate, zoom: adjustedZoom(path: path, heading: 0, insets: padding), bearing: 0, tilt: 0)
+            let pos = createCameraPosition(for: bounds.center.coordinate, zoom: adjustedZoom(path: path, heading: 0, insets: padding, tilt: 0), bearing: 0, tilt: 0)
             DispatchQueue.main.async { map.animate(to: pos) }
         case .firstStepAligned, .startToEndAligned:
             guard path.count >= 2 else { break }
             let bearing = fitMode == .firstStepAligned ? MPGeometryUtils.bearingBetweenPoints(from: path[0], to: path[1]) : MPGeometryUtils.bearingBetweenPoints(from: path[0], to: path.last!)
-            let pos = createCameraPosition(for: bounds.center.coordinate, zoom: adjustedZoom(path: path, heading: bearing, insets: padding), bearing: bearing, tilt: tilt)
+            let pos = createCameraPosition(for: bounds.center.coordinate, zoom: adjustedZoom(path: path, heading: bearing, insets: padding, tilt: tilt), bearing: bearing, tilt: tilt)
             DispatchQueue.main.async { map.animate(to: pos) }
         case .none:
             return
@@ -178,7 +178,7 @@ class GMRouteRenderer: MPRouteRenderer {
         }
     }
 
-    private func adjustedZoom(path: [CLLocationCoordinate2D], heading: CLLocationDirection, insets: UIEdgeInsets) -> Float {
+    private func adjustedZoom(path: [CLLocationCoordinate2D], heading: CLLocationDirection, insets: UIEdgeInsets, tilt: Float) -> Float {
         guard let map else { return 0 }
 
         // Get center in WGS84, height and width in meters of the path
@@ -198,8 +198,19 @@ class GMRouteRenderer: MPRouteRenderer {
         // Calculate ground resolution for the calculated zoom
         let groundResolution = groundResForLatitude(map.camera.target.latitude, zoom: Double(zoom))
 
+        // For tilted fit modes (.firstStepAligned/.startToEndAligned)
+        // perspective projection stretches the along-bearing extent of
+        // the route on screen relative to its geographic distance —
+        // the near half occupies more vertical pixels than the
+        // orthographic calculation suggests. Apply the same 1.2x
+        // safety margin to the along-bearing dimension that already
+        // exists for the perpendicular one, but only when tilt > 0,
+        // so .northAligned (the orthographic case) keeps its current
+        // behavior.
+        let heightMargin: Double = tilt > 0 ? 1.2 : 1.0
+
         // Calculate adjusted height and width based on insets
-        let adjustedHeightDist = centerAndHeight.distance + groundResolution * insets.bottom + groundResolution * insets.top
+        let adjustedHeightDist = centerAndHeight.distance * heightMargin + groundResolution * insets.bottom + groundResolution * insets.top
         let adjustedWidthDist = centerAndWidth.distance * 1.2 + groundResolution * insets.left + groundResolution * insets.right
 
         // Calculate a size factor for width and height

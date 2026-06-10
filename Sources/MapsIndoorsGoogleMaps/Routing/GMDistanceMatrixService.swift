@@ -27,7 +27,28 @@ class GMDistanceMatrixService: MPExternalDistanceMatrixService {
         self.apiKey = apiKey
     }
 
+    /// Queries the Routes API (computeRouteMatrix) first; the legacy Distance
+    /// Matrix API is only used when the key cannot call the Routes API (403) —
+    /// new Google projects cannot enable the legacy APIs at all (SPEX-1905).
     func query(
+        origins: [CLLocationCoordinate2D],
+        destinations: [CLLocationCoordinate2D],
+        config: MPDirectionsConfig
+    ) async throws -> MPDistanceMatrixResult? {
+        if GMGoogleRoutingCapability.state(for: apiKey) != .legacyOnly {
+            do {
+                let matrix = try await GMRoutesService(apiKey: apiKey).computeRouteMatrix(origins: origins, destinations: destinations, config: config)
+                GMGoogleRoutingCapability.set(.routesAvailable, for: apiKey)
+                return matrix.asMPMatrix
+            } catch GMRoutesServiceError.notAuthorized {
+                MPLog.google.info("Routes API not authorized for this key — falling back to the legacy Distance Matrix API.")
+                GMGoogleRoutingCapability.set(.legacyOnly, for: apiKey)
+            }
+        }
+        return try await legacyQuery(origins: origins, destinations: destinations, config: config)
+    }
+
+    private func legacyQuery(
         origins: [CLLocationCoordinate2D],
         destinations: [CLLocationCoordinate2D],
         config: MPDirectionsConfig
