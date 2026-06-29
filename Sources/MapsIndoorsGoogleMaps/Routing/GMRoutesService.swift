@@ -11,9 +11,11 @@ import MapsIndoors
 import MapsIndoorsCore
 
 enum GMRoutesServiceError: Error {
-    /// HTTP 403 whose cause is that the Routes API is not enabled for the key's
-    /// project (`SERVICE_DISABLED`). Callers fall back to the legacy
-    /// Directions/Distance Matrix APIs on exactly this error.
+    /// HTTP 403 whose cause is that the key cannot call the Routes API — either
+    /// the Routes API is not enabled for the key's project (`SERVICE_DISABLED`)
+    /// or it is enabled for the project but not for this key
+    /// (`API_KEY_SERVICE_DISABLED`). Callers fall back to the legacy
+    /// Directions/Distance Matrix APIs on exactly these errors.
     case notAuthorized
     /// Any other non-success HTTP status (including 403s with other causes).
     case requestFailed(statusCode: Int)
@@ -157,15 +159,24 @@ class GMRoutesService {
         return data
     }
 
-    /// The legacy fallback fires only when a 403 means the Routes API is not
-    /// enabled for the key's project (error reason `SERVICE_DISABLED`) — the one
-    /// permanent "this key cannot use Routes" condition SPEX-1905 targets. Every
-    /// other 403 (quota/rate limits, key or referer restrictions) is transient or
-    /// account-specific and is surfaced as an error, rather than silently pinning
-    /// the key to the legacy API for the rest of the process lifetime.
+    /// The legacy fallback fires only when a 403 means this key permanently
+    /// cannot call the Routes API. Two error reasons qualify:
+    /// - `SERVICE_DISABLED` — the Routes API is not enabled for the key's project.
+    /// - `API_KEY_SERVICE_DISABLED` — the Routes API is enabled for the project
+    ///   but not for this key.
+    /// Both are the permanent "this key cannot use Routes" condition SPEX-1905
+    /// targets. Every other 403 (quota/rate limits, key or referer restrictions)
+    /// is transient or account-specific and is surfaced as an error, rather than
+    /// silently pinning the key to the legacy API for the rest of the process
+    /// lifetime.
+    private static let routesUnavailableReasons: Set<String> = ["SERVICE_DISABLED", "API_KEY_SERVICE_DISABLED"]
+
     private static func isRoutesServiceDisabled(body: Data) -> Bool {
         guard let envelope = try? JSONDecoder().decode(GMRoutesErrorEnvelope.self, from: body) else { return false }
-        return envelope.error?.details?.contains { $0.reason == "SERVICE_DISABLED" } ?? false
+        return envelope.error?.details?.contains { detail in
+            guard let reason = detail.reason else { return false }
+            return routesUnavailableReasons.contains(reason)
+        } ?? false
     }
 
     private static func travelMode(for config: MPDirectionsConfig) -> String {
@@ -190,12 +201,16 @@ class GMRoutesService {
     private static func routeModifiers(for config: MPDirectionsConfig) -> GMRoutesRouteModifiers? {
         var modifiers = GMRoutesRouteModifiers()
         var hasModifier = false
+        // The Routes API only accepts `avoidIndoor` for WALK and 400s for other modes
+        // (legacy Directions tolerated it everywhere), so it is gated to WALK here. The
+        // other avoid types are valid on every mode.
+        let mode = travelMode(for: config)
         for avoid in config.avoidTypes ?? [] {
             switch avoid.typeString {
             case "ferries": modifiers.avoidFerries = true
             case "highways": modifiers.avoidHighways = true
             case "tolls": modifiers.avoidTolls = true
-            case "indoor": modifiers.avoidIndoor = true
+            case "indoor" where mode == "WALK": modifiers.avoidIndoor = true
             default: continue
             }
             hasModifier = true
