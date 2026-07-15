@@ -553,6 +553,12 @@ actor ViewState {
 
     private var latestModel: (any MPViewModel)?
 
+    /// Image roles ("marker icon", "2D model") for which a malformed asset has
+    /// already been logged, so a persistently-bad backend image is reported once
+    /// rather than every render. Cleared when the asset becomes valid or is
+    /// removed, so a later re-download is reported again if it too is malformed.
+    private var loggedMalformedImageRoles = Set<String>()
+
     @MainActor
     init(viewModel: any MPViewModel, map: GMSMapView, is2dModelEnabled: Bool, isFloorPlanEnabled: Bool) async {
         id = viewModel.id
@@ -587,6 +593,17 @@ actor ViewState {
     func computeDelta(newModel: any MPViewModel) {
         lastTimeTag = CFAbsoluteTimeGetCurrent()
         deltaOperations.value.removeAll()
+
+        // Skip malformed backend images instead of letting one bad asset break the
+        // render: a marker icon / 2D-model image that decoded to a degenerate size
+        // (or has no rasterizable backing) is dropped by `markerState` / `model2DState`
+        // below via `isValidForMapRendering`, so the rest of this feature and every
+        // other feature still renders. Report each dropped asset once here.
+        logIfImageMalformed(role: "marker icon", malformed: newModel.iconImageValidity.malformedImage, id: newModel.id)
+        if is2dModelsEnabled {
+            logIfImageMalformed(role: "2D model", malformed: newModel.model2DImageValidity.malformedImage, id: newModel.id)
+        }
+
         infoWindowText.value = newModel.marker?.properties[.markerLabelInfoWindow] as? String
         markerState = newModel.markerState
 
@@ -659,6 +676,18 @@ actor ViewState {
                 model2DClickable = newModel.model2D?.properties[.clickable] as? Bool ?? false
             }
         }
+    }
+
+    /// Logs (once per role) that a present-but-malformed image is being skipped.
+    /// A `nil` or valid image clears the role so a later malformed re-download is
+    /// reported again.
+    private func logIfImageMalformed(role: String, malformed: UIImage?, id: String) {
+        guard let malformed else {
+            loggedMalformedImageRoles.remove(role)
+            return
+        }
+        guard loggedMalformedImageRoles.insert(role).inserted else { return }
+        MPLog.google.error("Skipping malformed \(role) image for location \(id) (size \(malformed.size)); other map content is unaffected.")
     }
 
     private func computeMarkerState(newModel: any MPViewModel) {
@@ -899,12 +928,43 @@ class IconLabelBundle {
     }
 }
 
+/// A marker/2D-model source image classified for both rendering and diagnostics,
+/// so the `data[...] as? UIImage` cast and validity check happen in one place.
+private enum ImageValidity {
+    /// No image supplied.
+    case absent
+    /// A renderable image.
+    case valid(UIImage)
+    /// A present-but-unrenderable asset (degenerate size or no rasterizable backing).
+    case malformed(UIImage)
+
+    init(_ image: UIImage?) {
+        switch image {
+        case .none: self = .absent
+        case .some(let image): self = image.isValidForMapRendering ? .valid(image) : .malformed(image)
+        }
+    }
+
+    /// The image to render, or `nil` when absent or malformed — malformed assets are
+    /// skipped so one bad image never aborts/corrupts the render.
+    var renderable: UIImage? {
+        if case .valid(let image) = self { return image }
+        return nil
+    }
+
+    /// The offending image when one is present but unrenderable, else `nil`.
+    var malformedImage: UIImage? {
+        if case .malformed(let image) = self { return image }
+        return nil
+    }
+}
+
 /// Convenience extensions for view models, useful in the ViewState class' logic
 extension MPViewModel {
     var markerState: MarkerState {
         if let feature = marker {
             let hasLabel = feature.properties[.markerLabel] != nil
-            let hasIcon = (data[.icon] as? UIImage) != nil
+            let hasIcon = validIconImage != nil
             if hasIcon, hasLabel {
                 return .visibleIconLabel
             }
@@ -1041,7 +1101,7 @@ extension MPViewModel {
 
     var iconLabelBundle: IconLabelBundle? {
         let labelImage = computedLabelImage
-        let iconImage = data[.icon] as? UIImage
+        let iconImage = validIconImage
 
         var labelPosition: MPLabelPosition = .right
 
@@ -1072,15 +1132,22 @@ extension MPViewModel {
     }
 
     var model2DState: Model2DState {
-        if let hasIcon = (data[.model2D] as? UIImage) {
-            if hasIcon != nil as UIImage? {
-                return .visible
-            } else {
-                return .invisible
-            }
-        }
-        return .invisible
+        validModel2DImage != nil ? .visible : .invisible
     }
+
+    /// The marker icon source image classified for rendering and diagnostics.
+    fileprivate var iconImageValidity: ImageValidity { ImageValidity(data[.icon] as? UIImage) }
+
+    /// The 2D-model source image classified for rendering and diagnostics.
+    fileprivate var model2DImageValidity: ImageValidity { ImageValidity(data[.model2D] as? UIImage) }
+
+    /// The marker icon to render, or `nil` when absent or malformed. A backend asset
+    /// that decoded to an unrenderable image is treated as "no icon" so it is skipped
+    /// rather than aborting/corrupting the render (see ``UIImage/isValidForMapRendering``).
+    var validIconImage: UIImage? { iconImageValidity.renderable }
+
+    /// The 2D-model image to render, or `nil` when absent or malformed. See ``validIconImage``.
+    var validModel2DImage: UIImage? { model2DImageValidity.renderable }
 
     var model2DPosition: CLLocationCoordinate2D? {
         if let point = model2D?.geometry.coordinates as? MPPoint {
@@ -1102,11 +1169,7 @@ extension MPViewModel {
         case .undefined, .invisible:
             return nil
         case .visible:
-            if let image = data[.model2D] as? UIImage {
-                return image
-            } else {
-                return nil
-            }
+            return validModel2DImage
         }
     }
 
@@ -1160,6 +1223,27 @@ extension MPViewModel {
 }
 
 extension UIImage {
+    /// Whether this image can be safely scaled and handed to Google Maps.
+    ///
+    /// A backend asset that decoded to a degenerate size (zero, negative, NaN or
+    /// infinite) or that has no rasterizable backing store cannot be drawn by
+    /// `UIGraphicsImageRenderer` nor rendered by Google Maps — feeding it into the
+    /// render pipeline can abort or corrupt the whole frame. Images that fail this
+    /// check are skipped so a single bad asset never takes the rest of the map down
+    /// with it.
+    ///
+    /// A `CIImage`-backed image is deliberately accepted: SDK marker/2D assets are
+    /// backend-decoded (so `CGImage`-backed), but a caller could still supply a
+    /// valid `CIImage`-only icon. Rejecting it would drop a good icon (a visible
+    /// regression) to guard against the rare case where it fails to draw — being
+    /// inclusive is the safer trade-off.
+    var isValidForMapRendering: Bool {
+        let width = size.width
+        let height = size.height
+        guard width.isFinite, height.isFinite, width > 0, height > 0 else { return false }
+        return cgImage != nil || ciImage != nil
+    }
+
     fileprivate func withDebugBox(color _: UIColor = .red) -> UIImage {
         guard ViewState.debugDrawImageBorder == true else { return self }
         let size = CGSize(width: size.width, height: size.height)
