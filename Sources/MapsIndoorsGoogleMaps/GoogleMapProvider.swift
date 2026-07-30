@@ -24,9 +24,14 @@ public class GoogleMapProvider: MPMapProvider {
 
     public func reloadTilesForFloorChange() {}
 
-    private var renderer: Renderer?
+    var renderer: Renderer?
     private var _routeRenderer: GMRouteRenderer?
     private var tileProvider: GMTileProvider?
+
+    /// Tracks the in-flight render so a new `setViewModels` can cancel and
+    /// await its predecessor before starting. Main-actor isolated so the
+    /// cancel/await/replace sequence is itself race-free.
+    @MainActor private var renderTask: Task<Void, Never>?
 
     public var collisionHandling: MPCollisionHandling = .allowOverLap
 
@@ -84,13 +89,39 @@ public class GoogleMapProvider: MPMapProvider {
         self.mapView?.delegate = mapViewDelegate
     }
 
+    @MainActor
     public func setViewModels(models: [any MPViewModel], forceClear: Bool) async {
         await configureMapsIndoorsModuleLicensing()
-        do {
-            try await renderer?.setViewModels(models: models, collision: collisionHandling, forceClear: forceClear)
-        } catch {
-            // do nothing
+
+        // Serialize renders so only one render flow is ever alive, even under
+        // multiple concurrent callers. `Renderer.setViewModels` runs on a
+        // reentrant actor that suspends at every stage, so two overlapping
+        // renders would interleave across the cooperative pool holding the same
+        // `any MPViewModel` existentials — the GoogleMaps analogue of the
+        // cross-render retain/release crash fixed for Mapbox in SPEX-1713.
+        //
+        // The predecessor is captured and the replacement published with no
+        // `await` between the read of `renderTask` and its reassignment, so a
+        // second caller arriving on the main actor sees *this* task as its
+        // predecessor and chains behind it instead of all parking on the same
+        // older task (which would let their renderer calls run concurrently once
+        // that shared predecessor completed). Awaiting the predecessor happens
+        // *inside* the new task, so the renderer call starts only after the
+        // prior render has fully unwound and released its existential captures.
+        let collision = collisionHandling
+        let previous = renderTask
+        previous?.cancel()
+        let task = Task { @MainActor [weak self] in
+            await previous?.value
+            guard let self, !Task.isCancelled else { return }
+            do {
+                try await self.renderer?.setViewModels(models: models, collision: collision, forceClear: forceClear)
+            } catch {
+                // do nothing — includes CancellationError when superseded
+            }
         }
+        renderTask = task
+        await task.value
     }
 
     public var view: UIView? {

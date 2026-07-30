@@ -25,9 +25,24 @@ actor Renderer {
 
     private let overlapEngine = OverlapEngine()
 
-    private var lock = AsyncSemaphore(value: 1)
+    // Renders are serialized one layer up, in `GoogleMapProvider.setViewModels`,
+    // which cancels the in-flight render before chaining the next so the newest
+    // intent supersedes stale ones. A semaphore here would serialize too but
+    // could only queue renders FIFO — it can't cancel a superseded render — so
+    // it is intentionally not used.
+
+    /// Test instrumentation: the peak number of `setViewModels` bodies running
+    /// concurrently on this reentrant actor. The provider serializes renders, so
+    /// this must never exceed 1 — `GoogleMapProviderConcurrencyTests` asserts on
+    /// it to prove the serialization barrier holds under concurrent callers.
+    private(set) var peakConcurrentRenders = 0
+    private var activeRenders = 0
 
     func setViewModels(models: [any MPViewModel], collision: MPCollisionHandling, forceClear: Bool) async throws {
+        activeRenders += 1
+        peakConcurrentRenders = max(peakConcurrentRenders, activeRenders)
+        defer { activeRenders -= 1 }
+
         try Task.checkCancellation()
 
         let ids = models.map(\.id)
