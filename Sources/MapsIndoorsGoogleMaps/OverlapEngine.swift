@@ -1,4 +1,5 @@
 import Foundation
+import os
 import GameplayKit
 import GoogleMaps
 @_spi(Private) import MapsIndoorsCore
@@ -47,13 +48,13 @@ actor OverlapEngine {
     private var views = [ViewState]()
     private var projection: GMSProjection? = nil
 
-    private let tree = Locked<GKQuadtree<Entry>?>(value: nil)
+    private let tree = OSAllocatedUnfairLock<GKQuadtree<Entry>?>(uncheckedState: nil)
     private var entries = [String: Entry]()
 
     init() {}
 
     private func buildTree(viewStates: [ViewState]) async {
-        tree.locked { tree in
+        tree.withLockUnchecked { tree in
             tree = GKQuadtree(boundingQuad: GKQuad(quadMin: vector_float2(-10_000, -10_000), quadMax: vector_float2(10_000, 10_000)), minimumCellSize: 18)
         }
 
@@ -80,7 +81,7 @@ actor OverlapEngine {
             try Task.checkCancellation()
             if let current = self.entries[view.id], let bounds = await current.viewState.bounds {
                 var collisions = [Entry]()
-                tree.locked { tree in
+                tree.withLockUnchecked { tree in
                     collisions.append(contentsOf: tree?.elements(in: GKQuad(quadMin: bounds.gkBoundingBoxMin, quadMax: bounds.gkBoundingBoxMax)) ?? [])
                 }
 
@@ -229,7 +230,7 @@ actor OverlapEngine {
     func addEntry(entry: Entry) async {
         if let bounds = await entry.viewState.bounds {
             // Add hit detection points for all four corners, edges and center
-            tree.locked { tree in
+            tree.withLockUnchecked { tree in
                 // Four corners
                 let _1 = tree?.add(entry, at: bounds.gkBoundingBoxMin)
                 let _2 = tree?.add(entry, at: bounds.gkBoundingBoxMax)
@@ -251,7 +252,7 @@ actor OverlapEngine {
     }
 
     func removeEntry(entry: Entry) async {
-        tree.locked { tree in
+        tree.withLockUnchecked { tree in
             for node in entry.nodes {
                 tree?.remove(entry, using: node)
             }

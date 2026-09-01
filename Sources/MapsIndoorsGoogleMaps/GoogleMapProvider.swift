@@ -1,8 +1,11 @@
 import Foundation
 import GoogleMaps
-import MapsIndoorsCore
+@_spi(Private) import MapsIndoorsCore
 
-public class GoogleMapProvider: MPMapProvider {
+// SAFETY: (SPEX-1975) GoogleMapProvider wraps main-thread-only Google Maps UI and is
+// only ever accessed on the main actor, so it is safe to share by that convention. (MPMapProvider
+// is Sendable; the type-system proof is deferred with the wider provider-isolation work.)
+public class GoogleMapProvider: MPMapProvider, @unchecked Sendable {
     public let model2DResolutionLimit = 200
 
     // Unused on Google Maps
@@ -87,6 +90,14 @@ public class GoogleMapProvider: MPMapProvider {
             mapViewDelegate?.originalMapViewDelegate = originalDelegate
         }
         self.mapView?.delegate = mapViewDelegate
+
+        // Register the no-op base-map cache provider. `MapBoxProvider` registers its real
+        // implementation on init; without a matching registration here, switching from the
+        // Mapbox provider back to Google would leave the stale Mapbox provider registered,
+        // and base-map caching would wrongly run against the Mapbox TileStore. The active
+        // provider owns the global registration, so the no-op makes Google correctly report
+        // `baseMapCachingNotSupported`.
+        MPMapsIndoors.baseMapCacheProvider = GMBaseMapCacheProvider()
     }
 
     @MainActor
