@@ -166,6 +166,10 @@ public class GoogleMapProvider: MPMapProvider, @unchecked Sendable {
     /// to avoid double-application.
     public var appliesPaddingGlobally: Bool { true }
 
+    // Unused: Google Maps markers are hit-tested by the engine's own marker delegate, so there is
+    // no tolerance query to widen or narrow here.
+    public var expandedTapAreaEnabled: Bool = true
+
     // Unused
     public var wallExtrusionOpacity: Double = 0
 
