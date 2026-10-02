@@ -1,8 +1,11 @@
 import Foundation
-import GoogleMaps
+@preconcurrency import GoogleMaps
 import MapsIndoorsCore
 
-class GoogleMapViewDelegate: NSObject, GMSMapViewDelegate {
+/// `@MainActor`: Google Maps delivers every `GMSMapViewDelegate` callback on the main thread, and the class
+/// forwards to a host delegate and mutates the map view. Isolating it says so once instead of per callback.
+@MainActor
+class GoogleMapViewDelegate: NSObject, @preconcurrency GMSMapViewDelegate {
     weak var originalMapViewDelegate: GMSMapViewDelegate?
     weak var mapsIndoorsDelegate: MPMapProviderDelegate?
     var userGestureInProgress: Bool?

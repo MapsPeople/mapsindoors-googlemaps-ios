@@ -7,6 +7,7 @@ import GoogleMaps
 // is Sendable; the type-system proof is deferred with the wider provider-isolation work.)
 public class GoogleMapProvider: MPMapProvider, @unchecked Sendable {
     public let model2DResolutionLimit = 200
+    public let providerName = "google"
 
     // Unused on Google Maps
     public var enableNativeMapBuildings: Bool = false
@@ -51,12 +52,13 @@ public class GoogleMapProvider: MPMapProvider, @unchecked Sendable {
         self.tileProvider?.map = mapView
     }
 
+    // The view delegate is main-actor state behind a non-isolated public surface; see `mpOnMainSync`.
     public var delegate: MPMapProviderDelegate? {
         set {
-            mapViewDelegate?.mapsIndoorsDelegate = newValue
+            mpOnMainSync("GoogleMapProvider.delegate") { mapViewDelegate?.mapsIndoorsDelegate = newValue }
         }
         get {
-            mapViewDelegate?.mapsIndoorsDelegate
+            mpOnMainSync("GoogleMapProvider.delegate") { mapViewDelegate?.mapsIndoorsDelegate }
         }
     }
 
@@ -75,21 +77,26 @@ public class GoogleMapProvider: MPMapProvider, @unchecked Sendable {
         renderer = Renderer(map: self.mapView)
         _routeRenderer = GMRouteRenderer(map: self.mapView)
 
-        self.mapView?.isBuildingsEnabled = false
-        self.mapView?.isIndoorEnabled = false
-        self.mapView?.setMinZoom(1, maxZoom: 21)
-
         self.googleApiKey = googleApiKey
-
-        positionPresenter = GMPositionPresenter(map: mapView)
 
         cameraPosition = GMCameraPosition(cameraPosition: GMSMutableCameraPosition())
 
-        mapViewDelegate = GoogleMapViewDelegate(googleMapProvider: self)
-        if let originalDelegate = self.mapView?.delegate {
-            mapViewDelegate?.originalMapViewDelegate = originalDelegate
+        // The map view is main-actor state and the presenter creates Google Maps overlays; the initialiser is
+        // reached through `MPMapConfig(gmsMapView:googleApiKey:)` on the main thread, so this is a same-thread
+        // fast path in practice and a logged hop otherwise.
+        positionPresenter = mpOnMainSync("GoogleMapProvider.init") { GMPositionPresenter(map: mapView) }
+
+        mapViewDelegate = mpOnMainSync("GoogleMapProvider.init") { [self] in
+            let mapViewDelegate = GoogleMapViewDelegate(googleMapProvider: self)
+            mapView.isBuildingsEnabled = false
+            mapView.isIndoorEnabled = false
+            mapView.setMinZoom(1, maxZoom: 21)
+            if let originalDelegate = mapView.delegate {
+                mapViewDelegate.originalMapViewDelegate = originalDelegate
+            }
+            mapView.delegate = mapViewDelegate
+            return mapViewDelegate
         }
-        self.mapView?.delegate = mapViewDelegate
 
         // Register the no-op base-map cache provider. `MapBoxProvider` registers its real
         // implementation on init; without a matching registration here, switching from the
@@ -139,21 +146,22 @@ public class GoogleMapProvider: MPMapProvider, @unchecked Sendable {
         mapView
     }
 
+    // `mapView` is main-actor state behind a non-isolated public surface; see `mpOnMainSync`.
     public var mpAccessibilityElementsHidden: Bool {
         get {
-            mapView?.accessibilityElementsHidden ?? true
+            mpOnMainSync("GoogleMapProvider.mpAccessibilityElementsHidden") { mapView?.accessibilityElementsHidden ?? true }
         }
         set {
-            mapView?.accessibilityElementsHidden = newValue
+            mpOnMainSync("GoogleMapProvider.mpAccessibilityElementsHidden") { mapView?.accessibilityElementsHidden = newValue }
         }
     }
 
     public var padding: UIEdgeInsets {
         get {
-            mapView?.padding ?? UIEdgeInsets.zero
+            mpOnMainSync("GoogleMapProvider.padding") { mapView?.padding ?? UIEdgeInsets.zero }
         }
         set {
-            mapView?.padding = newValue
+            mpOnMainSync("GoogleMapProvider.padding") { mapView?.padding = newValue }
         }
     }
 

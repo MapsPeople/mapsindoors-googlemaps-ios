@@ -1,5 +1,5 @@
 import Foundation
-import GoogleMaps
+@preconcurrency import GoogleMaps
 @_spi(Private) import MapsIndoorsCore
 
 actor Renderer {
@@ -61,14 +61,16 @@ actor Renderer {
 
         try Task.checkCancellation()
 
-        if let projection = await stage0AcquireProjection() {
+        if let projection = await stage0AcquireProjection()?.projection {
             try Task.checkCancellation()
+
+            let cameraZoom = await stage0AcquireCameraZoom()
 
             await stage1PurgeViewStates(noLongerInView: noLongerInView, forceClear: forceClear)
 
             try Task.checkCancellation()
 
-            try await stage2ComputeDeltas(models: models)
+            try await stage2ComputeDeltas(models: models, cameraZoom: cameraZoom)
 
             try Task.checkCancellation()
 
@@ -84,10 +86,24 @@ actor Renderer {
         }
     }
 
+    /// SAFETY: `GMSProjection` is the immutable snapshot Google Maps hands out for one camera state; the
+    /// overlap engine only reads it (`point(for:)`, `visibleRegion()`), and it is never mutated by anyone.
+    /// The box is what lets the main actor hand it to this actor without a per-site suppression.
+    struct ProjectionSnapshot: @unchecked Sendable {
+        let projection: GMSProjection
+    }
+
     // Read the projection (requires main thread)
     @MainActor
-    func stage0AcquireProjection() async -> GMSProjection? {
-        await map?.projection
+    func stage0AcquireProjection() async -> ProjectionSnapshot? {
+        guard let map = await map else { return nil }
+        return ProjectionSnapshot(projection: map.projection)
+    }
+
+    // Read the camera zoom (requires main thread); `ViewState.computeDelta` sizes 2D models from it.
+    @MainActor
+    func stage0AcquireCameraZoom() async -> Double {
+        await Double(map?.camera.zoom ?? 0)
     }
 
     // Clean up viewstates outside of the current view
@@ -118,18 +134,18 @@ actor Renderer {
     }
 
     // Compute which delta operations needs to be applied to each view state, to reflect the model's values
-    func stage2ComputeDeltas(models: [any MPViewModel]) async throws {
+    func stage2ComputeDeltas(models: [any MPViewModel], cameraZoom: Double) async throws {
         guard let map else { return }
 
         for model in models {
             try Task.checkCancellation()
             // Compute delta between view state and view model, if one exists
             if let view = self.views[model.id] {
-                await view.computeDelta(newModel: model)
+                await view.computeDelta(newModel: model, cameraZoom: cameraZoom)
             } else {
                 // Otherwise, create view state
                 let view = await self.initViewState(viewModel: model, map: map)
-                await view.computeDelta(newModel: model)
+                await view.computeDelta(newModel: model, cameraZoom: cameraZoom)
                 self.views[model.id] = view
             }
         }

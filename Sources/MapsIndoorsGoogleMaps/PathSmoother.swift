@@ -3,10 +3,11 @@ import GoogleMaps
 import MapsIndoorsCore
 
 class PathSmoother {
+    /// Runs off the main actor, from `GMRouteRenderer.preparedRoute`, on a path built there and discarded once
+    /// its coordinates are read. It no longer copies `accessibilityLabel` onto the result (SPEX-2589): that is a
+    /// main-actor UIKit property, and the source path never carries a label, so the copy only moved `nil`.
     open class func smoothenPath(withCoordinates path: GMSPath!) -> GMSMutablePath! {
         let smoothPath = GMSMutablePath()
-
-        smoothPath.accessibilityLabel = path.accessibilityLabel
 
         smoothPath.add(path.coordinate(at: 0))
 

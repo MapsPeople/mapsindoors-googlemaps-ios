@@ -1,7 +1,10 @@
 import Foundation
-import GoogleMaps
+// Google Maps is not concurrency-annotated; `@preconcurrency` keeps its types usable across the actor
+// boundaries this file crosses (the `ViewState` actor, the main actor) without per-site suppression.
+@preconcurrency import GoogleMaps
 @_spi(Private) import MapsIndoorsCore
 import UIKit
+import os
 
 /// This enum defines which state changeing operations we have.
 /// There exists a state operation for each mutable characteristic of a view model's features (marker, polygon)
@@ -92,7 +95,10 @@ actor ViewState {
     var lastTimeTag = CFAbsoluteTimeGetCurrent()
 
     // This is a dictionary because state operations are idempotent so we only ever need to execute one
-    private nonisolated let deltaOperations = LockedObject<[StateOperation: (GMSMapView?) -> Void]>(value: [:])
+    /// One closure per changed characteristic, run on the main actor by `applyDelta()`. Main-actor isolated
+    /// closures replace the main-queue sync each one used to open with: the hop is made once per view state,
+    /// with `MainActor.run`, instead of once per operation from inside actor-isolated code.
+    private nonisolated let deltaOperations = LockedObject<[StateOperation: @MainActor @Sendable (GMSMapView?) -> Void]>(value: [:])
 
     nonisolated let marker = LockedObject<GMSMarker?>(value: nil)
     private nonisolated let polygons = LockedObject<[GMSPolygon]>(value: [])
@@ -109,18 +115,16 @@ actor ViewState {
         didSet {
             shouldShowInfoWindowShadow.value = shouldShowInfoWindow
             deltaOperations.value[.infoWindow] = { [weak self] map in
-                DispatchQueue.main.sync {
-                    if self?.shouldShowInfoWindowShadow.value ?? false, map?.selectedMarker != self?.marker.value {
-                        map?.selectedMarker = self?.marker.value
-                        if let anchor = self?.infoWindowAnchorPoint.value {
-                            self?.marker.value?.infoWindowAnchor = anchor
-                        }
+                if self?.shouldShowInfoWindowShadow.value ?? false, map?.selectedMarker != self?.marker.value {
+                    map?.selectedMarker = self?.marker.value
+                    if let anchor = self?.infoWindowAnchorPoint.value {
+                        self?.marker.value?.infoWindowAnchor = anchor
                     }
-                    if self?.shouldShowInfoWindowShadow.value ?? false == false {
-                        if let selected = map?.selectedMarker {
-                            if selected == self?.marker.value {
-                                map?.selectedMarker = nil
-                            }
+                }
+                if self?.shouldShowInfoWindowShadow.value ?? false == false {
+                    if let selected = map?.selectedMarker {
+                        if selected == self?.marker.value {
+                            map?.selectedMarker = nil
                         }
                     }
                 }
@@ -161,15 +165,13 @@ actor ViewState {
             }
 
             deltaOperations.value[.markerVisibility] = { [weak self] map in
-                DispatchQueue.main.sync {
-                    switch self?.markerStateShadow.value {
-                    case .visibleIconLabel, .visibleIcon, .visibleLabel:
-                        self?.marker.value?.map = map
-                    case .undefined, .invisible:
-                        self?.marker.value?.map = nil
-                    case .none:
-                        return
-                    }
+                switch self?.markerStateShadow.value {
+                case .visibleIconLabel, .visibleIcon, .visibleLabel:
+                    self?.marker.value?.map = map
+                case .undefined, .invisible:
+                    self?.marker.value?.map = nil
+                case .none:
+                    return
                 }
             }
         }
@@ -180,10 +182,8 @@ actor ViewState {
         didSet {
             markerAnchorShadow.value = markerAnchor
             deltaOperations.value[.markerAnchor] = { [weak self] _ in
-                DispatchQueue.main.sync {
-                    guard self?.marker.value?.groundAnchor != self?.markerAnchorShadow.value else { return }
-                    self?.marker.value?.groundAnchor = self?.markerAnchorShadow.value ?? CGPoint(x: 0.5, y: 0.5)
-                }
+                guard self?.marker.value?.groundAnchor != self?.markerAnchorShadow.value else { return }
+                self?.marker.value?.groundAnchor = self?.markerAnchorShadow.value ?? CGPoint(x: 0.5, y: 0.5)
             }
         }
     }
@@ -193,10 +193,8 @@ actor ViewState {
         didSet {
             markerPositionShadow.value = markerPosition
             deltaOperations.value[.markerPosition] = { [weak self] _ in
-                DispatchQueue.main.sync {
-                    guard let markerPosition = self?.markerPositionShadow.value, self?.marker.value?.position != markerPosition else { return }
-                    self?.marker.value?.position = markerPosition
-                }
+                guard let markerPosition = self?.markerPositionShadow.value, self?.marker.value?.position != markerPosition else { return }
+                self?.marker.value?.position = markerPosition
             }
         }
     }
@@ -206,10 +204,8 @@ actor ViewState {
         didSet {
             markerIconShadow.value = markerIcon
             deltaOperations.value[.markerIcon] = { [weak self] _ in
-                DispatchQueue.main.sync {
-                    guard self?.marker.value?.icon != self?.markerIconShadow.value, self?.markerIconShadow.value != nil else { return }
-                    self?.marker.value?.icon = self?.markerIconShadow.value
-                }
+                guard self?.marker.value?.icon != self?.markerIconShadow.value, self?.markerIconShadow.value != nil else { return }
+                self?.marker.value?.icon = self?.markerIconShadow.value
             }
         }
     }
@@ -219,9 +215,7 @@ actor ViewState {
         didSet {
             markerClickableShadow.value = markerClickable
             deltaOperations.value[.markerClickable] = { [weak self] _ in
-                DispatchQueue.main.sync {
-                    self?.marker.value?.isTappable = self?.markerClickableShadow.value ?? false
-                }
+                self?.marker.value?.isTappable = self?.markerClickableShadow.value ?? false
             }
         }
     }
@@ -232,19 +226,17 @@ actor ViewState {
         didSet {
             floorPlanStateShadow.value = floorPlanState
             deltaOperations.value[.floorplanVisibility] = { [weak self] map in
-                DispatchQueue.main.sync {
-                    switch self?.floorPlanStateShadow.value {
-                    case .visible:
-                        for wall in self?.floorPlanPolygons.value ?? [] {
-                            wall.map = map
-                        }
-                    case .undefined, .invisible:
-                        for wall in self?.floorPlanPolygons.value ?? [] {
-                            wall.map = nil
-                        }
-                    case .none:
-                        return
+                switch self?.floorPlanStateShadow.value {
+                case .visible:
+                    for wall in self?.floorPlanPolygons.value ?? [] {
+                        wall.map = map
                     }
+                case .undefined, .invisible:
+                    for wall in self?.floorPlanPolygons.value ?? [] {
+                        wall.map = nil
+                    }
+                case .none:
+                    return
                 }
             }
         }
@@ -255,10 +247,8 @@ actor ViewState {
         didSet {
             floorPlanStrokeColorShadow.value = floorPlanStrokeColor
             deltaOperations.value[.floorplanStrokeColor] = { [weak self] _ in
-                DispatchQueue.main.sync {
-                    for floorPlan in self?.floorPlanPolygons.value ?? [] {
-                        floorPlan.strokeColor = self?.floorPlanStrokeColorShadow.value
-                    }
+                for floorPlan in self?.floorPlanPolygons.value ?? [] {
+                    floorPlan.strokeColor = self?.floorPlanStrokeColorShadow.value
                 }
             }
         }
@@ -269,10 +259,8 @@ actor ViewState {
         didSet {
             floorPlanStrokeWidthShadow.value = floorPlanStrokeWidth
             deltaOperations.value[.floorplanStrokeWidth] = { [weak self] _ in
-                DispatchQueue.main.sync {
-                    for floorPlan in self?.floorPlanPolygons.value ?? [] {
-                        floorPlan.strokeWidth = CGFloat(self?.floorPlanStrokeWidthShadow.value ?? 0.0)
-                    }
+                for floorPlan in self?.floorPlanPolygons.value ?? [] {
+                    floorPlan.strokeWidth = CGFloat(self?.floorPlanStrokeWidthShadow.value ?? 0.0)
                 }
             }
         }
@@ -283,10 +271,8 @@ actor ViewState {
         didSet {
             floorPlanFillColorShadow.value = floorPlanFillColor
             deltaOperations.value[.floorplanFillColor] = { [weak self] _ in
-                DispatchQueue.main.sync {
-                    for floorPlan in self?.floorPlanPolygons.value ?? [] {
-                        floorPlan.fillColor = self?.floorPlanFillColorShadow.value
-                    }
+                for floorPlan in self?.floorPlanPolygons.value ?? [] {
+                    floorPlan.fillColor = self?.floorPlanFillColorShadow.value
                 }
             }
         }
@@ -297,28 +283,26 @@ actor ViewState {
         didSet {
             floorPlanGeometriesShadow.value = floorPlanGeometries ?? []
             deltaOperations.value[.floorplanGeometry] = { [weak self] map in
-                DispatchQueue.main.sync {
-                    let upper = Double(MapOverlayZIndex.endFloorPlanRange.rawValue)
-                    let lower = Double(MapOverlayZIndex.startFloorPlanRange.rawValue)
-                    let zindex = (abs(upper - (self?.poiArea.value ?? 0.0)).truncatingRemainder(dividingBy: lower) + lower) - 1  // -1 to ensure it is rendered below regular polygon geometry
+                let upper = Double(MapOverlayZIndex.endFloorPlanRange.rawValue)
+                let lower = Double(MapOverlayZIndex.startFloorPlanRange.rawValue)
+                let zindex = (abs(upper - (self?.poiArea.value ?? 0.0)).truncatingRemainder(dividingBy: lower) + lower) - 1  // -1 to ensure it is rendered below regular polygon geometry
 
-                    guard let floorPlanGeometries = self?.floorPlanGeometriesShadow.value, zindex.isFinite, zindex.isNaN == false else { return }
-                    for geometry in floorPlanGeometries {
-                        if self?.floorPlanPolygons.value.contains(where: { $0.path?.encodedPath() == geometry.encodedPath() }) ?? true { continue }
+                guard let floorPlanGeometries = self?.floorPlanGeometriesShadow.value, zindex.isFinite, zindex.isNaN == false else { return }
+                for geometry in floorPlanGeometries {
+                    if self?.floorPlanPolygons.value.contains(where: { $0.path?.encodedPath() == geometry.encodedPath() }) ?? true { continue }
 
-                        let floorPlanPolygon = GMSPolygon(path: geometry)
+                    let floorPlanPolygon = GMSPolygon(path: geometry)
 
-                        // To avoid having the polygon briefly with its default blue color, before our logic updates it (causes flashing) - we set a transparent color here
-                        floorPlanPolygon.fillColor = self?.floorPlanFillColorShadow.value ?? .red.withAlphaComponent(0.0)
-                        floorPlanPolygon.strokeColor = self?.floorPlanStrokeColorShadow.value ?? .red.withAlphaComponent(0.0)
-                        floorPlanPolygon.strokeWidth = self?.floorPlanStrokeWidthShadow.value ?? 0.0
-                        floorPlanPolygon.zIndex = Int32(Int(zindex))
-                        self?.floorPlanPolygons.value.append(floorPlanPolygon)
+                    // To avoid having the polygon briefly with its default blue color, before our logic updates it (causes flashing) - we set a transparent color here
+                    floorPlanPolygon.fillColor = self?.floorPlanFillColorShadow.value ?? .red.withAlphaComponent(0.0)
+                    floorPlanPolygon.strokeColor = self?.floorPlanStrokeColorShadow.value ?? .red.withAlphaComponent(0.0)
+                    floorPlanPolygon.strokeWidth = self?.floorPlanStrokeWidthShadow.value ?? 0.0
+                    floorPlanPolygon.zIndex = Int32(Int(zindex))
+                    self?.floorPlanPolygons.value.append(floorPlanPolygon)
 
-                        // In order for the updated geometry to be reflected, we need to remove/re-add the map
-                        if self?.floorPlanStateShadow.value.isVisible ?? false {
-                            floorPlanPolygon.map = map
-                        }
+                    // In order for the updated geometry to be reflected, we need to remove/re-add the map
+                    if self?.floorPlanStateShadow.value.isVisible ?? false {
+                        floorPlanPolygon.map = map
                     }
                 }
             }
@@ -331,22 +315,20 @@ actor ViewState {
         didSet {
             polygonStateShadow.value = polygonState
             deltaOperations.value[.polygonVisibility] = { [weak self] map in
-                DispatchQueue.main.sync {
+                for polygon in self?.polygons.value ?? [] {
+                    polygon.userData = self?.id
+                }
+                switch self?.polygonStateShadow.value {
+                case .visible:
                     for polygon in self?.polygons.value ?? [] {
-                        polygon.userData = self?.id
+                        polygon.map = map
                     }
-                    switch self?.polygonStateShadow.value {
-                    case .visible:
-                        for polygon in self?.polygons.value ?? [] {
-                            polygon.map = map
-                        }
-                    case .undefined, .invisible:
-                        for polygon in self?.polygons.value ?? [] {
-                            polygon.map = nil
-                        }
-                    case .none:
-                        return
+                case .undefined, .invisible:
+                    for polygon in self?.polygons.value ?? [] {
+                        polygon.map = nil
                     }
+                case .none:
+                    return
                 }
             }
         }
@@ -357,10 +339,8 @@ actor ViewState {
         didSet {
             polygonFillColorShadow.value = polygonFillColor
             deltaOperations.value[.polygonFillColor] = { [weak self] _ in
-                DispatchQueue.main.sync {
-                    for polygon in self?.polygons.value ?? [] {
-                        polygon.fillColor = self?.polygonFillColorShadow.value
-                    }
+                for polygon in self?.polygons.value ?? [] {
+                    polygon.fillColor = self?.polygonFillColorShadow.value
                 }
             }
         }
@@ -371,10 +351,8 @@ actor ViewState {
         didSet {
             polygonStrokeColorShadow.value = polygonStrokeColor
             deltaOperations.value[.polygonStrokeColor] = { [weak self] _ in
-                DispatchQueue.main.sync {
-                    for polygon in self?.polygons.value ?? [] {
-                        polygon.strokeColor = self?.polygonStrokeColorShadow.value
-                    }
+                for polygon in self?.polygons.value ?? [] {
+                    polygon.strokeColor = self?.polygonStrokeColorShadow.value
                 }
             }
         }
@@ -385,10 +363,8 @@ actor ViewState {
         didSet {
             polygonStrokeWidthShadow.value = polygonStrokeWidth
             deltaOperations.value[.polygonStrokeWidth] = { [weak self] _ in
-                DispatchQueue.main.sync {
-                    for polygon in self?.polygons.value ?? [] {
-                        polygon.strokeWidth = CGFloat(self?.polygonStrokeWidthShadow.value ?? 0.0)
-                    }
+                for polygon in self?.polygons.value ?? [] {
+                    polygon.strokeWidth = CGFloat(self?.polygonStrokeWidthShadow.value ?? 0.0)
                 }
             }
         }
@@ -399,28 +375,26 @@ actor ViewState {
         didSet {
             polygonGeometriesShadow.value = polygonGeometries ?? []
             deltaOperations.value[.polygonGeometry] = { [weak self] map in
-                DispatchQueue.main.sync {
-                    let upper = Double(MapOverlayZIndex.endPolygonsRange.rawValue)
-                    let lower = Double(MapOverlayZIndex.startPolygonsRange.rawValue)
-                    let zindex = abs(upper - (self?.poiArea.value ?? 0)).truncatingRemainder(dividingBy: lower) + lower
+                let upper = Double(MapOverlayZIndex.endPolygonsRange.rawValue)
+                let lower = Double(MapOverlayZIndex.startPolygonsRange.rawValue)
+                let zindex = abs(upper - (self?.poiArea.value ?? 0)).truncatingRemainder(dividingBy: lower) + lower
 
-                    guard let polygonGeometries = self?.polygonGeometriesShadow.value, zindex.isFinite, zindex.isNaN == false else { return }
-                    for geometry in polygonGeometries {
-                        if self?.polygons.value.contains(where: { $0.path?.encodedPath() == geometry.encodedPath() }) ?? true { continue }
+                guard let polygonGeometries = self?.polygonGeometriesShadow.value, zindex.isFinite, zindex.isNaN == false else { return }
+                for geometry in polygonGeometries {
+                    if self?.polygons.value.contains(where: { $0.path?.encodedPath() == geometry.encodedPath() }) ?? true { continue }
 
-                        let polygon = GMSPolygon(path: geometry)
+                    let polygon = GMSPolygon(path: geometry)
 
-                        // To avoid having the polygon briefly with its default blue color, before our logic updates it (causes flashing) - we set a transparent color here
-                        polygon.fillColor = self?.polygonFillColorShadow.value ?? .red.withAlphaComponent(0.0)
-                        polygon.strokeColor = self?.polygonStrokeColorShadow.value ?? .red.withAlphaComponent(0.0)
-                        polygon.strokeWidth = self?.polygonStrokeWidthShadow.value ?? 0.0
-                        polygon.zIndex = Int32(Int(zindex))
-                        self?.polygons.value.append(polygon)
+                    // To avoid having the polygon briefly with its default blue color, before our logic updates it (causes flashing) - we set a transparent color here
+                    polygon.fillColor = self?.polygonFillColorShadow.value ?? .red.withAlphaComponent(0.0)
+                    polygon.strokeColor = self?.polygonStrokeColorShadow.value ?? .red.withAlphaComponent(0.0)
+                    polygon.strokeWidth = self?.polygonStrokeWidthShadow.value ?? 0.0
+                    polygon.zIndex = Int32(Int(zindex))
+                    self?.polygons.value.append(polygon)
 
-                        // In order for the updated geometry to be reflected, we need to remove/re-add the map
-                        if self?.polygonStateShadow.value.isVisible ?? false {
-                            polygon.map = map
-                        }
+                    // In order for the updated geometry to be reflected, we need to remove/re-add the map
+                    if self?.polygonStateShadow.value.isVisible ?? false {
+                        polygon.map = map
                     }
                 }
             }
@@ -432,10 +406,8 @@ actor ViewState {
         didSet {
             polygonClickableShadow.value = polygonClickable
             deltaOperations.value[.polygonClickable] = { [weak self] _ in
-                DispatchQueue.main.sync {
-                    for polygon in self?.polygons.value ?? [] {
-                        polygon.isTappable = self?.polygonClickableShadow.value ?? false
-                    }
+                for polygon in self?.polygons.value ?? [] {
+                    polygon.isTappable = self?.polygonClickableShadow.value ?? false
                 }
             }
         }
@@ -449,15 +421,13 @@ actor ViewState {
             model2DStateShadow.value = model2DState
             if oldValue != model2DState {
                 deltaOperations.value[.model2dVisibility] = { [weak self] map in
-                    DispatchQueue.main.sync {
-                        switch self?.model2DStateShadow.value {
-                        case .visible:
-                            self?.overlay2D.value?.map = map
-                        case .undefined, .invisible:
-                            self?.overlay2D.value?.map = nil
-                        case .none:
-                            return
-                        }
+                    switch self?.model2DStateShadow.value {
+                    case .visible:
+                        self?.overlay2D.value?.map = map
+                    case .undefined, .invisible:
+                        self?.overlay2D.value?.map = nil
+                    case .none:
+                        return
                     }
                 }
             }
@@ -469,10 +439,8 @@ actor ViewState {
         didSet {
             model2DPositionShadow.value = model2DPosition
             deltaOperations.value[.model2dPosition] = { [weak self] _ in
-                DispatchQueue.main.sync {
-                    guard let model2DPosition = self?.model2DPositionShadow.value, self?.overlay2D.value?.position != model2DPosition else { return }
-                    self?.overlay2D.value?.position = model2DPosition
-                }
+                guard let model2DPosition = self?.model2DPositionShadow.value, self?.overlay2D.value?.position != model2DPosition else { return }
+                self?.overlay2D.value?.position = model2DPosition
             }
         }
     }
@@ -482,22 +450,20 @@ actor ViewState {
         didSet {
             model2DImageShadow.value = model2DImage
             deltaOperations.value[.model2dImage] = { [weak self] _ in
-                DispatchQueue.main.sync {
-                    var bounds: GMSCoordinateBounds?
-                    if let model2DSouthWest = self?.model2DPositionShadow.value {
-                        let model2DSouthEast = GMSGeometryOffset(model2DSouthWest, self?.model2DWidthMeters.value ?? 0, 90)
-                        let model2DNorthEast = GMSGeometryOffset(model2DSouthEast, self?.model2DHeightMeters.value ?? 0, 0)
-                        bounds = GMSCoordinateBounds(coordinate: model2DSouthWest, coordinate: model2DNorthEast)
-                    }
-
-                    self?.overlay2D.value?.bounds = bounds
-                    self?.overlay2D.value?.icon = self?.model2DImageShadow.value
-
-                    let upper = Double(MapOverlayZIndex.endModel2DRange.rawValue)
-                    let lower = Double(MapOverlayZIndex.startModel2DRange.rawValue)
-                    let zindex = abs(upper - (self?.poiArea.value ?? 0.0)).truncatingRemainder(dividingBy: lower) + lower
-                    self?.overlay2D.value?.zIndex = Int32(zindex)
+                var bounds: GMSCoordinateBounds?
+                if let model2DSouthWest = self?.model2DPositionShadow.value {
+                    let model2DSouthEast = GMSGeometryOffset(model2DSouthWest, self?.model2DWidthMeters.value ?? 0, 90)
+                    let model2DNorthEast = GMSGeometryOffset(model2DSouthEast, self?.model2DHeightMeters.value ?? 0, 0)
+                    bounds = GMSCoordinateBounds(coordinate: model2DSouthWest, coordinate: model2DNorthEast)
                 }
+
+                self?.overlay2D.value?.bounds = bounds
+                self?.overlay2D.value?.icon = self?.model2DImageShadow.value
+
+                let upper = Double(MapOverlayZIndex.endModel2DRange.rawValue)
+                let lower = Double(MapOverlayZIndex.startModel2DRange.rawValue)
+                let zindex = abs(upper - (self?.poiArea.value ?? 0.0)).truncatingRemainder(dividingBy: lower) + lower
+                self?.overlay2D.value?.zIndex = Int32(zindex)
             }
         }
     }
@@ -508,9 +474,7 @@ actor ViewState {
             model2DBearingShadow.value = model2DBearing
             if oldValue != model2DBearing {
                 deltaOperations.value[.model2dBearing] = { [weak self] _ in
-                    DispatchQueue.main.sync {
-                        self?.overlay2D.value?.bearing = self?.model2DBearingShadow.value ?? 0.0
-                    }
+                    self?.overlay2D.value?.bearing = self?.model2DBearingShadow.value ?? 0.0
                 }
             }
         }
@@ -521,9 +485,7 @@ actor ViewState {
         didSet {
             model2DClickableShadow.value = model2DClickable
             deltaOperations.value[.model2dClickable] = { [weak self] _ in
-                DispatchQueue.main.sync {
-                    self?.overlay2D.value?.isTappable = self?.model2DClickableShadow.value ?? false
-                }
+                self?.overlay2D.value?.isTappable = self?.model2DClickableShadow.value ?? false
             }
         }
     }
@@ -565,16 +527,16 @@ actor ViewState {
         self.map = map
         self.latestModel = viewModel
 
-        await marker.value = GMSMarker(position: CLLocationCoordinate2D(latitude: 0, longitude: 0))
-        await marker.value?.zIndex = Int32(MapOverlayZIndex.startMarkerOverlay.rawValue)
-        await overlay2D.value = GMSGroundOverlay(bounds: nil, icon: nil)
-        await polygons.value = [GMSPolygon]()
+        marker.value = GMSMarker(position: CLLocationCoordinate2D(latitude: 0, longitude: 0))
+        marker.value?.zIndex = Int32(MapOverlayZIndex.startMarkerOverlay.rawValue)
+        overlay2D.value = GMSGroundOverlay(bounds: nil, icon: nil)
+        polygons.value = [GMSPolygon]()
 
         is2dModelsEnabled = is2dModelEnabled
         self.isFloorPlanEnabled = isFloorPlanEnabled
 
-        await marker.value?.userData = id
-        await overlay2D.value?.userData = id
+        marker.value?.userData = id
+        overlay2D.value?.userData = id
     }
 
     func calculateMarkerAnchor(markerSize: Double, iconSize: Double, anchor: Double) -> Double {
@@ -590,7 +552,7 @@ actor ViewState {
     /// Computes the set of state operations required to have the view state's properties reflect those in the view model.
     /// This is done by assigning model values to the view state's corresponding property. Upon each property assignment, it check
     /// whether the value has changed - and a function is created to accommodate this change property and reflect the changes on corresponding map feature.
-    func computeDelta(newModel: any MPViewModel) {
+    func computeDelta(newModel: any MPViewModel, cameraZoom: Double) {
         lastTimeTag = CFAbsoluteTimeGetCurrent()
         deltaOperations.value.removeAll()
 
@@ -640,8 +602,10 @@ actor ViewState {
             model2DState = newModel.model2DState
             if model2DState.isVisible || model2DState == .undefined {
                 if let bundle = newModel.model2DBundle {
-                    if let mapView = map, let image = bundle.icon {
-                        let zoom = Int(mapView.camera.zoom)
+                    if map != nil, let image = bundle.icon {
+                        // The zoom is read on the main actor once per render (`Renderer.stage0`) and handed in,
+                        // rather than read off the main-thread camera from this actor.
+                        let zoom = Int(cameraZoom)
                         let scaleFactor =
                             switch zoom {
                             case 21: 1.0
@@ -713,12 +677,11 @@ actor ViewState {
                     if markerState.isIconVisible, markerState.isLabelVisible {
                         markerAnchor = CGPoint(x: anchorX, y: 0.5)
                         infoWindowAnchorPoint.value = CGPoint(x: anchorX, y: 0)
-                        DispatchQueue.main.async {
-                            if newModel.marker?.properties[.isCollidable] as? Bool == false {
-                                if self.markerState.isLabelVisible || self.markerState.isIconVisible {
-                                    self.infoWindowAnchorPoint.value = CGPoint(x: anchorX, y: 0)
-                                }
-                            }
+                        // The state is read here, on the actor, and only the decision travels to the main actor.
+                        let reassertAnchor = newModel.marker?.properties[.isCollidable] as? Bool == false && (markerState.isLabelVisible || markerState.isIconVisible)
+                        if reassertAnchor {
+                            let anchorPoint = infoWindowAnchorPoint
+                            Task { @MainActor in anchorPoint.value = CGPoint(x: anchorX, y: 0) }
                         }
                     } else if markerState.isIconVisible {
                         markerAnchor = CGPoint(x: 0.5, y: 0.5)
@@ -727,9 +690,8 @@ actor ViewState {
                     }
 
                     if markerState.isIconVisible, markerState.isLabelVisible {
-                        DispatchQueue.main.async {
-                            self.marker.value?.infoWindowAnchor = CGPoint(x: anchorX, y: 0)
-                        }
+                        let marker = marker
+                        Task { @MainActor in marker.value?.infoWindowAnchor = CGPoint(x: anchorX, y: 0) }
 
                         if let iconPlacement = newModel.marker?.properties[.markerIconPlacement] as? String,
                             let labelPlacement = newModel.marker?.properties[.labelAnchor] as? String
@@ -755,9 +717,8 @@ actor ViewState {
                             }
                         }
                     } else if markerState.isIconVisible {
-                        DispatchQueue.main.async {
-                            self.marker.value?.infoWindowAnchor = CGPoint(x: 0.5, y: 0)
-                        }
+                        let marker = marker
+                        Task { @MainActor in marker.value?.infoWindowAnchor = CGPoint(x: 0.5, y: 0) }
 
                         if let iconPlacement = newModel.marker?.properties[.markerIconPlacement] as? String {
                             switch iconPlacement {
@@ -815,9 +776,15 @@ actor ViewState {
             .model2dClickable,
         ]
 
-        for operationType in renderOperationsInOrder {
-            if let operation = deltaOperations.value[operationType] {
-                operation(self.map)
+        let pending = deltaOperations.value
+        let operations = renderOperationsInOrder.compactMap { pending[$0] }
+        guard operations.isEmpty == false else { return }
+        let map = self.map
+        // One hop per view state, and the actor suspends for it instead of blocking its thread on a main-queue
+        // sync per operation, as it used to.
+        await MainActor.run {
+            for operation in operations {
+                operation(map)
             }
         }
     }
@@ -839,7 +806,7 @@ actor ViewState {
     }
 }
 
-class Model2DBundle {
+final class Model2DBundle: Sendable {
     let icon: UIImage?
 
     let widthMeters: Double
@@ -852,21 +819,19 @@ class Model2DBundle {
     }
 }
 
-class IconLabelBundle {
+final class IconLabelBundle: Sendable {
     let icon: UIImage?
     let label: UIImage?
     let iconSize: CGSize
     let labelSize: CGSize
-    var both: UIImage?
+    let both: UIImage?
 
     required init(icon: UIImage?, label: UIImage?, labelPosition: MPLabelPosition = .right) {
         self.icon = icon
         self.label = label
         iconSize = icon?.size ?? CGSize.zero
         labelSize = label?.size ?? CGSize.zero
-        if let compiled = compile(icon: icon, label: label, position: labelPosition) {
-            both = compiled
-        }
+        both = Self.compile(icon: icon, label: label, position: labelPosition)
     }
 
     func getSize(state: MarkerState) -> CGSize? {
@@ -884,7 +849,7 @@ class IconLabelBundle {
         }
     }
 
-    private func compile(icon: UIImage?, label: UIImage?, position: MPLabelPosition) -> UIImage? {
+    private static func compile(icon: UIImage?, label: UIImage?, position: MPLabelPosition) -> UIImage? {
         let respectDistance = CGFloat(3)
         let format = UIGraphicsImageRendererFormat.preferred()
         format.opaque = false  // true = no alpha channel, for debugging
@@ -1306,25 +1271,24 @@ extension UIImage {
     case right
 }
 
-// The "old", inefficient way
-class LockedObject<T> {
-    private var obj: T
-    private let lock = NSLock()
+/// A lock-guarded box, so a `ViewState` actor can expose a field to the main actor (the delta closures) and
+/// to the `OverlapEngine` actor without an `await`.
+///
+/// SAFETY: the reference itself is only ever read or written under the lock, which is what `Sendable` promises
+/// here. It says nothing about the boxed value: most boxes hold Google Maps objects (`GMSMarker`, `GMSPolygon`,
+/// `GMSGroundOverlay`, `GMSPath`) which are main-thread objects, and every site that touches one of those
+/// *through* the box does so on the main actor (the delta closures) or only compares / reads a scalar off it
+/// (`OverlapEngine`). The scalar and image boxes (`Bool`, `Double`, `CGPoint`, `UIImage?`, enums) are values.
+/// A new box holding a mutable non-UI reference would need its own argument before joining this list.
+final class LockedObject<T>: @unchecked Sendable {
+    private let storage: OSAllocatedUnfairLock<T>
 
-    public required init(value: T) {
-        self.obj = value
+    required init(value: T) {
+        storage = OSAllocatedUnfairLock(uncheckedState: value)
     }
 
-    public var value: T {
-        get {
-            lock.withLock {
-                return obj
-            }
-        }
-        set {
-            lock.withLock {
-                obj = newValue
-            }
-        }
+    var value: T {
+        get { storage.withLockUnchecked { $0 } }
+        set { storage.withLockUnchecked { $0 = newValue } }
     }
 }

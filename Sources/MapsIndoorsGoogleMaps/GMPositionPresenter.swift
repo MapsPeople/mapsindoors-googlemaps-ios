@@ -1,12 +1,17 @@
 import Foundation
 import GoogleMaps
-import MapsIndoorsCore
+@_spi(Private) import MapsIndoorsCore
 
-class GMPositionPresenter: MPPositionPresenter {
+/// Owns the blue-dot marker and accuracy circle on a Google map view. Main-actor isolated, because every field
+/// is a Google Maps overlay; the `MPPositionPresenter` requirements are non-isolated and hop to the main actor
+/// with a `Task`, where the main-queue async used to be.
+@MainActor
+final class GMPositionPresenter: MPPositionPresenter {
     private weak var map: GMSMapView!
 
-    private var marker: GMSMarker
-    private var circle: GMSCircle
+    /// Internal (not `private`) so tests can observe what `apply` and `clear` put on, and take off, the map.
+    let marker: GMSMarker
+    let circle: GMSCircle
 
     required init(map: GMSMapView) {
         self.map = map
@@ -20,7 +25,7 @@ class GMPositionPresenter: MPPositionPresenter {
         circle.zIndex = Int32(MapOverlayZIndex.positioningAccuracyCircle.rawValue)
     }
 
-    func apply(
+    nonisolated func apply(
         position: CLLocationCoordinate2D,
         markerIcon: UIImage,
         markerBearing: Double,
@@ -30,30 +35,51 @@ class GMPositionPresenter: MPPositionPresenter {
         circleStrokeColor: UIColor,
         circleStrokeWidth: Double
     ) {
-        DispatchQueue.main.async {
-            self.marker.position = position
-            self.marker.icon = markerIcon
-            self.marker.rotation = markerBearing
-            self.marker.opacity = Float(markerOpacity)
-
-            self.circle.position = position
-            self.circle.radius = circleRadiusMeters
-            self.circle.fillColor = circleFillColor
-            self.circle.strokeColor = circleStrokeColor
-            self.circle.strokeWidth = circleStrokeWidth
-
-            if self.marker.map == nil {
-                self.marker.map = self.map
-            }
-
-            if self.circle.map == nil {
-                self.circle.map = self.map
-            }
+        Task { @MainActor in
+            self.applyOnMain(
+                position: position,
+                markerIcon: markerIcon,
+                markerBearing: markerBearing,
+                markerOpacity: markerOpacity,
+                circleRadiusMeters: circleRadiusMeters,
+                circleFillColor: circleFillColor,
+                circleStrokeColor: circleStrokeColor,
+                circleStrokeWidth: circleStrokeWidth)
         }
     }
 
-    func clear() {
-        DispatchQueue.main.async { [weak self] in
+    private func applyOnMain(
+        position: CLLocationCoordinate2D,
+        markerIcon: UIImage,
+        markerBearing: Double,
+        markerOpacity: Double,
+        circleRadiusMeters: Double,
+        circleFillColor: UIColor,
+        circleStrokeColor: UIColor,
+        circleStrokeWidth: Double
+    ) {
+        marker.position = position
+        marker.icon = markerIcon
+        marker.rotation = markerBearing
+        marker.opacity = Float(markerOpacity)
+
+        circle.position = position
+        circle.radius = circleRadiusMeters
+        circle.fillColor = circleFillColor
+        circle.strokeColor = circleStrokeColor
+        circle.strokeWidth = circleStrokeWidth
+
+        if marker.map == nil {
+            marker.map = map
+        }
+
+        if circle.map == nil {
+            circle.map = map
+        }
+    }
+
+    nonisolated func clear() {
+        Task { @MainActor [weak self] in
             self?.marker.map = nil
             self?.circle.map = nil
         }

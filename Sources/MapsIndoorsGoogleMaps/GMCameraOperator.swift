@@ -1,7 +1,11 @@
 import Foundation
 import GoogleMaps
-import MapsIndoorsCore
+@_spi(Private) import MapsIndoorsCore
 
+/// Every camera call is deferred by one hop even though the operator is already on the main actor: that is how
+/// the class has always behaved (each method opened with a main-queue async), and callers such as the directions
+/// renderer rely on the camera move landing after the current turn's map mutations. The hop is a main-actor
+/// `Task`, which keeps that ordering without the main queue.
 @MainActor
 class GMCameraOperator: MPCameraOperator {
     private weak var map: GMSMapView?
@@ -11,7 +15,7 @@ class GMCameraOperator: MPCameraOperator {
     }
 
     func move(target: CLLocationCoordinate2D, zoom: Float) {
-        DispatchQueue.main.async {
+        Task { @MainActor in
             let position = GMSCameraPosition(
                 latitude: target.latitude,
                 longitude: target.longitude,
@@ -22,27 +26,35 @@ class GMCameraOperator: MPCameraOperator {
     }
 
     func animate(pos: MPCameraPosition) {
-        DispatchQueue.main.async {
+        // Lifted out here: `MPCameraPosition` is a MapsIndoors protocol with no Sendable story, and the closure
+        // only needs the numbers.
+        let target = pos.target
+        let zoom = pos.zoom
+        let bearing = pos.bearing
+        let viewingAngle = pos.viewingAngle
+        Task { @MainActor in
             let position = GMSCameraPosition(
-                latitude: pos.target.latitude,
-                longitude: pos.target.longitude,
-                zoom: pos.zoom,
-                bearing: pos.bearing,
-                viewingAngle: pos.viewingAngle
+                latitude: target.latitude,
+                longitude: target.longitude,
+                zoom: zoom,
+                bearing: bearing,
+                viewingAngle: viewingAngle
             )
             self.map?.animate(to: position)
         }
     }
 
     func animate(bounds: MPGeoBounds) {
-        DispatchQueue.main.async {
-            let b = GMSCoordinateBounds(coordinate: bounds.northEast, coordinate: bounds.southWest)
+        let northEast = bounds.northEast
+        let southWest = bounds.southWest
+        Task { @MainActor in
+            let b = GMSCoordinateBounds(coordinate: northEast, coordinate: southWest)
             self.map?.animate(with: GMSCameraUpdate.fit(b))
         }
     }
 
     func animate(target: CLLocationCoordinate2D, zoom: Float?) {
-        DispatchQueue.main.async {
+        Task { @MainActor in
             let position = GMSCameraPosition(
                 latitude: target.latitude,
                 longitude: target.longitude,

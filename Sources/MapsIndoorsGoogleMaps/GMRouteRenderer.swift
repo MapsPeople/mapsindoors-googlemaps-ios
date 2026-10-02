@@ -1,5 +1,5 @@
 import Foundation
-import GoogleMaps
+@preconcurrency import GoogleMaps
 @_spi(Private) import MapsIndoorsCore
 
 extension BinaryFloatingPoint {
@@ -8,20 +8,36 @@ extension BinaryFloatingPoint {
     }
 }
 
-class GMRouteRenderer: MPRouteRenderer {
+/// Draws a route (halo, base line, stamp, travelling animation, endpoint markers) on a Google map view.
+///
+/// Main-actor isolated: every stored property is a Google Maps overlay, an animator over a `CADisplayLink`, or
+/// a generation counter that guards them. The `MPRouteRenderer` requirements are non-isolated and reached from
+/// Core; each one snapshots what it needs from the (non-Sendable) model into a value and hops to the main actor
+/// with a `Task`, where the main-queue async each used to open with was.
+///
+/// The geometry work that used to run on a private serial queue (path smoothing, the per-frame subpath of the
+/// travelling animation) runs on non-isolated static async functions instead, which run on the global executor
+/// (off the main actor) with the result handed back as plain coordinates. They are deliberately not marked
+/// `@concurrent`: that attribute needs a Swift 6.2 compiler and only changes anything under
+/// `NonisolatedNonsendingByDefault`, which this target does not enable.
+@MainActor
+final class GMRouteRenderer: MPRouteRenderer {
     private weak var map: GMSMapView?
 
     private var polylineColor = UIColor.black
     private var polyline: GMSPolyline?
-    private var basePolyline: GMSPolyline?
+    /// Internal (read-only) so tests can check what `apply` and `clear` leave on the map.
+    private(set) var basePolyline: GMSPolyline?
     private var stampPolyline: GMSPolyline?  // arrow preset: a rotating sprite stamped along the line
     private var stampMarkers = [GMSMarker]()  // custom preset: flat markers along the line, rotated to the line bearing
 
-    private static let casingOffset = 2.0  // default halo padding per side (total width = strokeWeight + 2 × this)
-    private static let fallbackColor = UIColor(red: 48.0 / 255.0, green: 113.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
+    // `nonisolated`: read by `RouteStyle.init` on the caller's side of the hop; both are immutable values.
+    private nonisolated static let casingOffset = 2.0  // default halo padding per side (total width = strokeWeight + 2 × this)
+    private nonisolated static let fallbackColor = UIColor(red: 48.0 / 255.0, green: 113.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
 
     // Bumped per apply(); a tick from a superseded generation bails so a stale animation
-    // frame can't clear or restyle a route that a newer apply() has already drawn.
+    // frame can't clear or restyle a route that a newer apply() has already drawn. Main-actor confined
+    // (it used to be confined to the geometry queue, which no longer exists).
     private var animationGeneration = 0
     private static var didLogDashedFallback = false
 
@@ -38,55 +54,107 @@ class GMRouteRenderer: MPRouteRenderer {
     private var animationPolyline: GMSPolyline?
     private var valueAnimator: RouteLineAnimator?
     // Coalescing guard for the flow pipeline: true while a display-link tick's geometry→draw round-trip is still
-    // in flight. A tick arriving meanwhile is dropped instead of piling more geometry work onto `queue`, so a
-    // long / dense route can't let the async pipeline lag wall-clock behind the display link (the natural
-    // back-pressure the pre-CADisplayLink `queue.sync` flow had for free). Touched only on the main thread, so
-    // it needs no lock.
+    // in flight. A tick arriving meanwhile is dropped instead of piling more geometry work up, so a long / dense
+    // route can't let the async pipeline lag wall-clock behind the display link (the natural back-pressure the
+    // pre-CADisplayLink `queue.sync` flow had for free). Main-actor confined.
     private var flowTickInFlight = false
 
-    var routeMarkerDelegate: MPRouteMarkerDelegate?
+    // SAFETY: a non-isolated protocol requirement on a main-actor class. Written by the directions renderer and
+    // read by the map view delegate's marker-tap callback, both on the main thread, as before this class was
+    // isolated; `nonisolated(unsafe)` records that the access is main-only by convention rather than by proof.
+    nonisolated(unsafe) var routeMarkerDelegate: MPRouteMarkerDelegate?
 
-    required init(map: GMSMapView?) {
+    nonisolated required init(map: GMSMapView?) {
         self.map = map
     }
 
-    private var queue = DispatchQueue(label: "MapsIndoors.GoogleMapsRouteRenderer")
+    // MARK: - Values that cross the hop
 
-    func apply(
+    /// Everything `apply` derives from `MPDirectionsRendererOptions`, resolved on the caller's side so only
+    /// values travel to the main actor. Colours and images are Sendable; the enums are MapsIndoors' own.
+    private struct RouteStyle: Sendable {
+        let strokeColor: UIColor
+        let strokeWeight: Double
+        let strokeStyle: MPStrokeStyle
+        let haloColor: UIColor?
+        let haloWidth: Double
+        let repeating: Bool
+        let animationType: MPRouteAnimationType
+        let overlayBaseColor: UIColor
+        let overlayOpacity: Double
+        let overlayColor: UIColor
+        let overlayWeight: Double
+        let stampType: MPRouteStampType
+        let stampImage: UIImage?
+        let stampSpacing: Double
+        let arrowSpriteSize: Double
+        let customMarkerSize: Double
+
+        init(options: MPDirectionsRendererOptions) {
+            let baseColor = options.strokeColor ?? GMRouteRenderer.fallbackColor
+            strokeColor = baseColor.withAlphaComponent(options.strokeOpacity?.doubleValue ?? 1.0)
+            strokeWeight = options.strokeWeight?.doubleValue ?? 4.0
+            strokeStyle = options.strokeStyle ?? .solid
+            // Halo shows by default (a faint version of the line colour) unless explicitly disabled.
+            haloColor =
+                (options.backgroundColorEnabled?.boolValue ?? true)
+                ? (options.backgroundColor?.withAlphaComponent(options.backgroundColorOpacity?.doubleValue ?? 1.0)
+                    ?? baseColor.withAlphaComponent(0.3))
+                : nil
+            haloWidth = strokeWeight + 2 * (options.backgroundColorWeight?.doubleValue ?? GMRouteRenderer.casingOffset)
+            repeating = options.animationRepeating
+            animationType = options.animationType ?? .flow
+            // Independent travelling-overlay style (its own colour / opacity / weight) — solid and thinner
+            // than the base line so both colours read. The static base line carries any dash/dot. Colour and
+            // opacity are kept separate so pulse can oscillate the alpha without losing the base tint.
+            overlayBaseColor = options.animatedOverlayColor ?? baseColor
+            overlayOpacity = options.animatedOverlayOpacity?.doubleValue ?? 1.0
+            overlayColor = overlayBaseColor.withAlphaComponent(overlayOpacity)
+            overlayWeight = options.animatedOverlayWeight?.doubleValue ?? strokeWeight
+            // Static repeating stamp (arrow / custom icon) along the line — a decoration, independent of the
+            // travelling animation. Resolved to the same bitmap both providers stamp.
+            stampType = options.stampType ?? .none
+            stampImage = RouteStampIcon.image(type: stampType, arrowStyle: options.arrowStyle ?? .chevron, color: options.stampColor ?? .white, customImage: options.stampImage)
+            stampSpacing = options.stampSpacing?.doubleValue ?? 24
+            let stampScale = options.stampScale?.doubleValue ?? 1.0
+            // The arrow rides a GMSSpriteStyle sprite (renders smaller than Mapbox, hence the larger factor) and
+            // stays proportional to the line weight. A custom icon renders at a fixed 24 pt @1× base (× the scale
+            // slider), so its on-screen size doesn't track the line weight or the source image's dimensions.
+            arrowSpriteSize = strokeWeight * 5.0 * stampScale
+            customMarkerSize = 24.0 * stampScale
+        }
+    }
+
+    /// The parts of a `RouteViewModelProducer` the renderer reads, copied out on the caller's side. The producer
+    /// is a mutable class owned by Core; the view models it carries are `Sendable` already.
+    private struct RouteSnapshot: Sendable {
+        let polyline: [CLLocationCoordinate2D]
+        let start: (any MPViewModel)?
+        let end: (any MPViewModel)?
+        let stops: [any MPViewModel]
+
+        init(_ model: RouteViewModelProducer) {
+            polyline = model.polyline
+            start = model.start
+            end = model.end
+            stops = model.stops ?? []
+        }
+    }
+
+    // MARK: - MPRouteRenderer
+
+    nonisolated func apply(
         model: RouteViewModelProducer, options: MPDirectionsRendererOptions,
         animate: Bool, duration: TimeInterval, pathSmoothing: Bool
     ) {
-        let baseColor = options.strokeColor ?? GMRouteRenderer.fallbackColor
-        let strokeColor = baseColor.withAlphaComponent(options.strokeOpacity?.doubleValue ?? 1.0)
-        let strokeWeight = options.strokeWeight?.doubleValue ?? 4.0
-        let strokeStyle = options.strokeStyle ?? .solid
-        // Halo shows by default (a faint version of the line colour) unless explicitly disabled.
-        let haloColor: UIColor? = (options.backgroundColorEnabled?.boolValue ?? true)
-            ? (options.backgroundColor?.withAlphaComponent(options.backgroundColorOpacity?.doubleValue ?? 1.0)
-                ?? baseColor.withAlphaComponent(0.3))
-            : nil
-        let haloWidth = strokeWeight + 2 * (options.backgroundColorWeight?.doubleValue ?? GMRouteRenderer.casingOffset)
-        let repeating = options.animationRepeating
-        let animationType = options.animationType ?? .flow
-        // Independent travelling-overlay style (its own colour / opacity / weight) — solid and thinner
-        // than the base line so both colours read. The static base line carries any dash/dot. Colour and
-        // opacity are kept separate so pulse can oscillate the alpha without losing the base tint.
-        let overlayBaseColor = options.animatedOverlayColor ?? baseColor
-        let overlayOpacity = options.animatedOverlayOpacity?.doubleValue ?? 1.0
-        let overlayColor = overlayBaseColor.withAlphaComponent(overlayOpacity)
-        let overlayWeight = options.animatedOverlayWeight?.doubleValue ?? strokeWeight
-        // Static repeating stamp (arrow / custom icon) along the line — a decoration, independent of the
-        // travelling animation. Resolved to the same bitmap both providers stamp.
-        let stampType = options.stampType ?? .none
-        let stampImage = RouteStampIcon.image(type: stampType, arrowStyle: options.arrowStyle ?? .chevron, color: options.stampColor ?? .white, customImage: options.stampImage)
-        let stampSpacing = options.stampSpacing?.doubleValue ?? 24
-        let stampScale = options.stampScale?.doubleValue ?? 1.0
-        // The arrow rides a GMSSpriteStyle sprite (renders smaller than Mapbox, hence the larger factor) and
-        // stays proportional to the line weight. A custom icon renders at a fixed 24 pt @1× base (× the scale
-        // slider), so its on-screen size doesn't track the line weight or the source image's dimensions.
-        let arrowSpriteSize = strokeWeight * 5.0 * stampScale
-        let customMarkerSize = 24.0 * stampScale
+        let style = RouteStyle(options: options)
+        let snapshot = RouteSnapshot(model)
+        Task { @MainActor in
+            self.applyOnMain(snapshot: snapshot, style: style, animate: animate, duration: duration, pathSmoothing: pathSmoothing)
+        }
+    }
 
+    private func applyOnMain(snapshot: RouteSnapshot, style: RouteStyle, animate: Bool, duration: TimeInterval, pathSmoothing: Bool) {
         markerGeneration += 1
         for viewState in views {
             Task {
@@ -95,210 +163,220 @@ class GMRouteRenderer: MPRouteRenderer {
         }
         views.removeAll()
 
-        queue.async {
-            // Bump the generation on the serial queue (read back on the same queue in the
-            // animation tick) so a superseded apply()'s ticks bail without a cross-thread read.
-            self.animationGeneration += 1
-            let generation = self.animationGeneration
+        // Bump the generation before the geometry work starts; a superseded apply()'s frames compare against it.
+        animationGeneration += 1
+        let generation = animationGeneration
+        let coordinates = snapshot.polyline
 
-            let gmsPath = GMSMutablePath()
-
-            for c in model.polyline {
-                gmsPath.add(c)
-            }
-
-            var path = gmsPath
-
-            if pathSmoothing {
-                path = PathSmoother.smoothenPath(withCoordinates: gmsPath)
-            }
-
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                // Halo / casing — widest, drawn beneath the base line. A nil backgroundColor disables it.
-                self.polyline?.map = nil
-                self.polyline = nil
-                if let haloColor {
-                    let halo = GMSPolyline(path: path)
-                    halo.geodesic = true
-                    halo.strokeColor = haloColor
-                    halo.strokeWidth = CGFloat(haloWidth)
-                    halo.zIndex = Int32(MapOverlayZIndex.directionsOverlays.rawValue)
-                    halo.map = self.map
-                    self.polyline = halo
-                }
-
-                // Static styled base line (strokeColor / opacity / weight / style).
-                self.basePolyline?.map = nil
-                self.basePolyline = GMSPolyline(path: path)
-                self.basePolyline?.geodesic = true
-                self.basePolyline?.strokeColor = strokeColor
-                self.basePolyline?.strokeWidth = CGFloat(strokeWeight)
-                self.basePolyline?.zIndex = Int32(MapOverlayZIndex.directionsOverlays.rawValue) + 1
-                self.applyStrokeStyle(strokeStyle, to: self.basePolyline, color: strokeColor, path: path)
-                // Static line always visible; the flow overlay sits on top and no longer replaces it.
-                self.basePolyline?.map = self.map
-
-                // Repeating stamp along the line (above the base line, below the start/end markers).
-                self.stampPolyline?.map = nil
-                self.stampPolyline = nil
-                for marker in self.stampMarkers { marker.map = nil }
-                self.stampMarkers.removeAll()
-                if let stampImage {
-                    if stampType == .custom {
-                        // Custom icons are placed as individual markers along the route (GMSSpriteStyle can't
-                        // rotate an off-axis stamp cleanly); each lies flat and rotates to the line bearing, so
-                        // the icon follows the line through turns like the arrow.
-                        var routeCoords = [CLLocationCoordinate2D]()
-                        if path.count() > 0 {
-                            for i in 0...(path.count() - 1) { routeCoords.append(path.coordinate(at: i)) }
-                        }
-                        self.placeStampMarkers(icon: stampImage, along: routeCoords, sizePoints: customMarkerSize, spacingPoints: stampSpacing)
-                    } else {
-                        // Arrow: a clear stroke stamping a SQUARE sprite (icon centred, undistorted) repeated
-                        // along the line. GMSSpriteStyle scales the sprite to the stroke width and repeats it
-                        // touching, so the stroke width is the tile = the spacing, and the arrow is rotated a
-                        // quarter-turn to point along travel.
-                        let sprite = GMRouteRenderer.stampSprite(icon: stampImage, iconSize: arrowSpriteSize, tile: stampSpacing)
-                        let stamp = GMSPolyline(path: path)
-                        stamp.geodesic = true
-                        stamp.strokeWidth = CGFloat(stampSpacing)
-                        stamp.zIndex = Int32(MapOverlayZIndex.directionsOverlays.rawValue) + 3
-                        let stroke = GMSStrokeStyle.solidColor(.clear)
-                        stroke.stampStyle = GMSSpriteStyle(image: sprite)
-                        stamp.spans = [GMSStyleSpan(style: stroke, segments: Double(max(Int(path.count()) - 1, 1)))]
-                        stamp.map = self.map
-                        self.stampPolyline = stamp
-                    }
-                }
-            }
-
-            if animate {
-                var route = [CLLocationCoordinate2D]()
-                if path.count() > 0 {
-                    for i in 0...(path.count() - 1) {
-                        route.append(path.coordinate(at: i))
-                    }
-                }
-
-                let totalDistance = RouteFlowGeometry.totalLength(of: route)
-
-                // The animator is a main-thread CADisplayLink, so create/start it on main. Per-frame geometry
-                // is still built OFF main on `queue` (over the immutable `route` snapshot) and only the draw is
-                // hopped back to main, so the display link never blocks main on the geometry compute.
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    self.valueAnimator?.invalidate()
-                    self.valueAnimator = RouteLineAnimator(
-                        duration: duration,
-                        repeatMode: repeating ? .infinite : .once,
-                        startDelay: 0.1,
-                        onProgress: { [weak self] progress in
-                            guard let self else { return }
-                            // Drop this tick if the previous one's geometry→draw round-trip hasn't finished, so
-                            // ticks can't pile up on `queue` and lag behind the display link on a long route. The
-                            // flag is cleared on every completion path below (draw, stopped, or superseded).
-                            if self.flowTickInFlight { return }
-                            self.flowTickInFlight = true
-                            self.queue.async { [weak self] in
-                                guard let self else { return }
-                                guard generation == self.animationGeneration else {
-                                    // Superseded by a newer apply(): free the slot (on main) so the next
-                                    // animation's ticks aren't skipped forever, then drop this frame.
-                                    DispatchQueue.main.async { [weak self] in self?.flowTickInFlight = false }
-                                    return
-                                }
-                                let points: [CLLocationCoordinate2D]
-                                switch animationType {
-                                case .pulse:
-                                    // The whole line stays drawn; only its opacity animates (below).
-                                    points = route
-                                case .comet:
-                                    // A short bright segment of fixed length travels along the route — build
-                                    // just that moving window each frame.
-                                    let window = RouteFlowGeometry.cometWindow(progress: progress, totalLength: totalDistance)
-                                    points = RouteFlowGeometry.subpath(of: route, fromDistance: window.tail, toDistance: window.head)
-                                default:
-                                    // flow: grow the revealed portion from the start up to the head.
-                                    points = RouteFlowGeometry.subpath(of: route, fromDistance: 0, toDistance: progress * totalDistance)
-                                }
-
-                                let animatedPath = GMSMutablePath()
-                                for coord in points {
-                                    animatedPath.add(coord)
-                                }
-
-                                DispatchQueue.main.async { [weak self] in
-                                    guard let self else { return }
-                                    // Free the slot for the next tick whether or not this one draws.
-                                    defer { self.flowTickInFlight = false }
-                                    // The generation check on `queue` already dropped superseded ticks;
-                                    // here just skip drawing once the animation has stopped.
-                                    guard self.valueAnimator?.isRunning ?? false else { return }
-                                    let line: GMSPolyline
-                                    if let existing = self.animationPolyline {
-                                        line = existing
-                                    } else {
-                                        line = GMSPolyline()
-                                        line.zIndex = Int32(MapOverlayZIndex.directionsOverlays.rawValue) + 2
-                                        line.map = self.map
-                                        self.animationPolyline = line
-                                    }
-                                    // Re-apply the overlay style every tick so a live change takes effect
-                                    // immediately. Solid + thinner than the base; the base carries any dash.
-                                    line.path = animatedPath
-                                    line.strokeWidth = CGFloat(overlayWeight)
-                                    line.spans = []
-                                    if animationType == .pulse {
-                                        // Oscillate opacity dim → bright → dim each loop; never fully vanish.
-                                        line.strokeColor = overlayBaseColor.withAlphaComponent(overlayOpacity * RouteFlowGeometry.pulseOpacityFactor(progress: progress))
-                                    } else {
-                                        line.strokeColor = overlayColor
-                                    }
-                                }
-                            }
-                        },
-                        onEnd: { [weak self] in
-                            // Natural (non-repeating) completion only. The base line is always visible, so just
-                            // drop the flow overlay — but only if this animator is still current. A newer apply()
-                            // (live type switch, next/prev leg, floor/options change) may have superseded it and
-                            // be reusing animationPolyline; generation is confined to `queue`, so compare there.
-                            guard let self else { return }
-                            guard self.queue.sync(execute: { generation == self.animationGeneration }) else { return }
-                            self.animationPolyline?.map = nil
-                            self.animationPolyline = nil
-                        })
-                    self.valueAnimator?.start()
-                }
-            } else {
-                // No flow — stop any prior animator and remove the lingering overlay so only the static line shows.
-                DispatchQueue.main.async { [weak self] in
-                    self?.valueAnimator?.invalidate()
-                    self?.valueAnimator = nil
-                    self?.animationPolyline?.map = nil
-                    self?.animationPolyline = nil
-                }
-            }
-            DispatchQueue.main.async { [weak self] in
-                // start model render
-                self?.renderMarker(model: model.start, type: .start)
-                // end model render
-                self?.renderMarker(model: model.end, type: .end)
-
-                for stop in model.stops ?? [] {
-                    self?.renderMarker(model: stop, type: .stop)
-                }
-            }
+        Task { [weak self] in
+            // Off the main actor: building and (optionally) smoothing the path is CPU work.
+            let route = await Self.preparedRoute(coordinates, smoothing: pathSmoothing)
+            guard let self, generation == self.animationGeneration else { return }
+            self.commit(route: route, snapshot: snapshot, style: style, animate: animate, duration: duration, generation: generation)
         }
     }
+
+    /// Everything that touches the map for one `apply`, on the main actor, with the geometry already prepared.
+    private func commit(route: [CLLocationCoordinate2D], snapshot: RouteSnapshot, style: RouteStyle, animate: Bool, duration: TimeInterval, generation: Int) {
+        let path = GMSMutablePath()
+        for coordinate in route {
+            path.add(coordinate)
+        }
+
+        // Halo / casing — widest, drawn beneath the base line. A nil backgroundColor disables it.
+        polyline?.map = nil
+        polyline = nil
+        if let haloColor = style.haloColor {
+            let halo = GMSPolyline(path: path)
+            halo.geodesic = true
+            halo.strokeColor = haloColor
+            halo.strokeWidth = CGFloat(style.haloWidth)
+            halo.zIndex = Int32(MapOverlayZIndex.directionsOverlays.rawValue)
+            halo.map = map
+            polyline = halo
+        }
+
+        // Static styled base line (strokeColor / opacity / weight / style).
+        basePolyline?.map = nil
+        basePolyline = GMSPolyline(path: path)
+        basePolyline?.geodesic = true
+        basePolyline?.strokeColor = style.strokeColor
+        basePolyline?.strokeWidth = CGFloat(style.strokeWeight)
+        basePolyline?.zIndex = Int32(MapOverlayZIndex.directionsOverlays.rawValue) + 1
+        applyStrokeStyle(style.strokeStyle, to: basePolyline, color: style.strokeColor, path: path)
+        // Static line always visible; the flow overlay sits on top and no longer replaces it.
+        basePolyline?.map = map
+
+        // Repeating stamp along the line (above the base line, below the start/end markers).
+        stampPolyline?.map = nil
+        stampPolyline = nil
+        for marker in stampMarkers { marker.map = nil }
+        stampMarkers.removeAll()
+        if let stampImage = style.stampImage {
+            if style.stampType == .custom {
+                // Custom icons are placed as individual markers along the route (GMSSpriteStyle can't
+                // rotate an off-axis stamp cleanly); each lies flat and rotates to the line bearing, so
+                // the icon follows the line through turns like the arrow.
+                placeStampMarkers(icon: stampImage, along: route, sizePoints: style.customMarkerSize, spacingPoints: style.stampSpacing)
+            } else {
+                // Arrow: a clear stroke stamping a SQUARE sprite (icon centred, undistorted) repeated
+                // along the line. GMSSpriteStyle scales the sprite to the stroke width and repeats it
+                // touching, so the stroke width is the tile = the spacing, and the arrow is rotated a
+                // quarter-turn to point along travel.
+                let sprite = GMRouteRenderer.stampSprite(icon: stampImage, iconSize: style.arrowSpriteSize, tile: style.stampSpacing)
+                let stamp = GMSPolyline(path: path)
+                stamp.geodesic = true
+                stamp.strokeWidth = CGFloat(style.stampSpacing)
+                stamp.zIndex = Int32(MapOverlayZIndex.directionsOverlays.rawValue) + 3
+                let stroke = GMSStrokeStyle.solidColor(.clear)
+                stroke.stampStyle = GMSSpriteStyle(image: sprite)
+                stamp.spans = [GMSStyleSpan(style: stroke, segments: Double(max(Int(path.count()) - 1, 1)))]
+                stamp.map = map
+                stampPolyline = stamp
+            }
+        }
+
+        if animate {
+            startAnimation(route: route, style: style, duration: duration, generation: generation)
+        } else {
+            // No flow — stop any prior animator and remove the lingering overlay so only the static line shows.
+            valueAnimator?.invalidate()
+            valueAnimator = nil
+            animationPolyline?.map = nil
+            animationPolyline = nil
+        }
+
+        // start model render
+        renderMarker(model: snapshot.start, type: .start)
+        // end model render
+        renderMarker(model: snapshot.end, type: .end)
+
+        for stop in snapshot.stops {
+            renderMarker(model: stop, type: .stop)
+        }
+    }
+
+    /// Starts the travelling animation over `route`. The animator is a main-thread CADisplayLink, so it is created
+    /// and started here. Per-frame geometry is still built off main (over the immutable `route` snapshot) and only
+    /// the draw runs on the main actor, so the display link never blocks main on the geometry compute.
+    private func startAnimation(route: [CLLocationCoordinate2D], style: RouteStyle, duration: TimeInterval, generation: Int) {
+        let totalDistance = RouteFlowGeometry.totalLength(of: route)
+        let animationType = style.animationType
+
+        valueAnimator?.invalidate()
+        valueAnimator = RouteLineAnimator(
+            duration: duration,
+            repeatMode: style.repeating ? .infinite : .once,
+            startDelay: 0.1,
+            onProgress: { [weak self] progress in
+                guard let self else { return }
+                // Drop this tick if the previous one's geometry→draw round-trip hasn't finished, so ticks can't
+                // pile up and lag behind the display link on a long route. The flag is cleared on every
+                // completion path below (draw, stopped, or superseded).
+                if self.flowTickInFlight { return }
+                // Superseded by a newer apply(): drop this frame. The counter is main-actor state, and so is
+                // this callback, so the check needs no queue hop any more.
+                guard generation == self.animationGeneration else { return }
+                self.flowTickInFlight = true
+                Task { [weak self] in
+                    let points = await Self.framePoints(route: route, totalDistance: totalDistance, animationType: animationType, progress: progress)
+                    guard let self else { return }
+                    // Free the slot for the next tick whether or not this one draws.
+                    defer { self.flowTickInFlight = false }
+                    // A newer apply() may have landed while the frame was being built.
+                    guard generation == self.animationGeneration else { return }
+                    // Skip drawing once the animation has stopped.
+                    guard self.valueAnimator?.isRunning ?? false else { return }
+                    self.drawFrame(points: points, style: style, progress: progress)
+                }
+            },
+            onEnd: { [weak self] in
+                // Natural (non-repeating) completion only. The base line is always visible, so just drop the flow
+                // overlay — but only if this animator is still current. A newer apply() (live type switch, next/prev
+                // leg, floor/options change) may have superseded it and be reusing animationPolyline.
+                guard let self else { return }
+                guard generation == self.animationGeneration else { return }
+                self.animationPolyline?.map = nil
+                self.animationPolyline = nil
+            })
+        valueAnimator?.start()
+    }
+
+    /// Draws one frame of the travelling overlay.
+    private func drawFrame(points: [CLLocationCoordinate2D], style: RouteStyle, progress: Double) {
+        let animatedPath = GMSMutablePath()
+        for coordinate in points {
+            animatedPath.add(coordinate)
+        }
+
+        let line: GMSPolyline
+        if let existing = animationPolyline {
+            line = existing
+        } else {
+            line = GMSPolyline()
+            line.zIndex = Int32(MapOverlayZIndex.directionsOverlays.rawValue) + 2
+            line.map = map
+            animationPolyline = line
+        }
+        // Re-apply the overlay style every tick so a live change takes effect immediately. Solid + thinner than
+        // the base; the base carries any dash.
+        line.path = animatedPath
+        line.strokeWidth = CGFloat(style.overlayWeight)
+        line.spans = []
+        if style.animationType == .pulse {
+            // Oscillate opacity dim → bright → dim each loop; never fully vanish.
+            line.strokeColor = style.overlayBaseColor.withAlphaComponent(style.overlayOpacity * RouteFlowGeometry.pulseOpacityFactor(progress: progress))
+        } else {
+            line.strokeColor = style.overlayColor
+        }
+    }
+
+    // MARK: - Geometry, off the main actor
+
+    /// The route as drawn: the caller's coordinates, smoothed when asked. Google Maps path objects are built and
+    /// discarded here so only coordinates cross back.
+    private nonisolated static func preparedRoute(_ coordinates: [CLLocationCoordinate2D], smoothing: Bool) async -> [CLLocationCoordinate2D] {
+        guard smoothing else { return coordinates }
+        let gmsPath = GMSMutablePath()
+        for coordinate in coordinates {
+            gmsPath.add(coordinate)
+        }
+        guard let smoothed = PathSmoother.smoothenPath(withCoordinates: gmsPath) else { return coordinates }
+        var route = [CLLocationCoordinate2D]()
+        if smoothed.count() > 0 {
+            for i in 0...(smoothed.count() - 1) {
+                route.append(smoothed.coordinate(at: i))
+            }
+        }
+        return route
+    }
+
+    /// The overlay geometry for one animation frame.
+    private nonisolated static func framePoints(route: [CLLocationCoordinate2D], totalDistance: Double, animationType: MPRouteAnimationType, progress: Double) async -> [CLLocationCoordinate2D] {
+        switch animationType {
+        case .pulse:
+            // The whole line stays drawn; only its opacity animates (in `drawFrame`).
+            return route
+        case .comet:
+            // A short bright segment of fixed length travels along the route — build just that moving window
+            // each frame.
+            let window = RouteFlowGeometry.cometWindow(progress: progress, totalLength: totalDistance)
+            return RouteFlowGeometry.subpath(of: route, fromDistance: window.tail, toDistance: window.head)
+        default:
+            // flow: grow the revealed portion from the start up to the head.
+            return RouteFlowGeometry.subpath(of: route, fromDistance: 0, toDistance: progress * totalDistance)
+        }
+    }
+
+    // MARK: - Markers, camera, clear
 
     /// Re-renders only the route markers, leaving every polyline — and the running animator — alone. `views`
     /// holds nothing but the marker view states, so tearing them all down and rebuilding from `model` is the
     /// marker-only counterpart of `apply`: a marker the model no longer carries (an endpoint pin whose display
     /// rule just went out of its zoom range) is destroyed and not recreated.
-    func applyMarkers(model: RouteViewModelProducer) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+    nonisolated func applyMarkers(model: RouteViewModelProducer) {
+        let snapshot = RouteSnapshot(model)
+        Task { @MainActor in
             self.markerGeneration += 1
             for viewState in self.views {
                 Task {
@@ -307,33 +385,40 @@ class GMRouteRenderer: MPRouteRenderer {
             }
             self.views.removeAll()
 
-            self.renderMarker(model: model.start, type: .start)
-            self.renderMarker(model: model.end, type: .end)
+            self.renderMarker(model: snapshot.start, type: .start)
+            self.renderMarker(model: snapshot.end, type: .end)
 
-            for stop in model.stops ?? [] {
+            for stop in snapshot.stops {
                 self.renderMarker(model: stop, type: .stop)
             }
         }
     }
 
-    func moveCamera(points path: [CLLocationCoordinate2D], animate _: Bool, durationMs _: Int, tilt: Float, fitMode: MPCameraViewFitMode, padding: UIEdgeInsets, maxZoom: Double?) {
+    nonisolated func moveCamera(points path: [CLLocationCoordinate2D], animate: Bool, durationMs: Int, tilt: Float, fitMode: MPCameraViewFitMode, padding: UIEdgeInsets, maxZoom: Double?) {
+        Task { @MainActor in
+            self.moveCameraOnMain(points: path, tilt: tilt, fitMode: fitMode, padding: padding, maxZoom: maxZoom)
+        }
+    }
+
+    private func moveCameraOnMain(points path: [CLLocationCoordinate2D], tilt: Float, fitMode: MPCameraViewFitMode, padding: UIEdgeInsets, maxZoom: Double?) {
         guard let map, path.count >= 2 else { return }
 
         let bounds = MPGeoBounds(points: path)
         // Cap the fitted zoom so a short leg can't zoom in past fitBoundsMaxZoom / automatedZoomLimit.
         let zoomCap = maxZoom.map { Float($0) } ?? .greatestFiniteMagnitude
 
+        // The camera move itself stays one hop later than the fit computation, as it always was.
         switch fitMode {
         case .northAligned:
             let zoom = min(adjustedZoom(path: path, heading: 0, insets: padding, tilt: 0), zoomCap)
             let pos = createCameraPosition(for: bounds.center.coordinate, zoom: zoom, bearing: 0, tilt: 0)
-            DispatchQueue.main.async { map.animate(to: pos) }
+            Task { @MainActor in map.animate(to: pos) }
         case .firstStepAligned, .startToEndAligned:
             guard path.count >= 2 else { break }
             let bearing = fitMode == .firstStepAligned ? MPGeometryUtils.bearingBetweenPoints(from: path[0], to: path[1]) : MPGeometryUtils.bearingBetweenPoints(from: path[0], to: path.last!)
             let zoom = min(adjustedZoom(path: path, heading: bearing, insets: padding, tilt: tilt), zoomCap)
             let pos = createCameraPosition(for: bounds.center.coordinate, zoom: zoom, bearing: bearing, tilt: tilt)
-            DispatchQueue.main.async { map.animate(to: pos) }
+            Task { @MainActor in map.animate(to: pos) }
         case .none:
             return
         default:
@@ -457,31 +542,38 @@ class GMRouteRenderer: MPRouteRenderer {
         return GMRouteRenderer.metersPerPoint(lat: lat, zoom: zoom) / screenScale
     }
 
-    func clear() {
-        DispatchQueue.main.async { [weak self] in
-            // The animator's CADisplayLink must be torn down on the main thread.
-            self?.valueAnimator?.invalidate()
-            self?.valueAnimator = nil
-            self?.polyline?.map = nil
-            self?.basePolyline?.map = nil
-            self?.animationPolyline?.map = nil
-            self?.stampPolyline?.map = nil
-            for marker in self?.stampMarkers ?? [] { marker.map = nil }
-
-            self?.polyline = nil
-            self?.basePolyline = nil
-            self?.animationPolyline = nil
-            self?.stampPolyline = nil
-            self?.stampMarkers.removeAll()
-
-            self?.markerGeneration += 1
-            for viewState in self?.views ?? [] {
-                Task {
-                    await viewState.destroy()
-                }
-            }
-            self?.views.removeAll()
+    nonisolated func clear() {
+        Task { @MainActor [weak self] in
+            self?.clearOnMain()
         }
+    }
+
+    private func clearOnMain() {
+        // Supersede any apply still in flight. Its geometry comes back from the global executor after this has
+        // run, and its generation check is the only thing that stops it drawing the route this clear removed.
+        animationGeneration += 1
+        // The animator's CADisplayLink must be torn down on the main thread.
+        valueAnimator?.invalidate()
+        valueAnimator = nil
+        polyline?.map = nil
+        basePolyline?.map = nil
+        animationPolyline?.map = nil
+        stampPolyline?.map = nil
+        for marker in stampMarkers { marker.map = nil }
+
+        polyline = nil
+        basePolyline = nil
+        animationPolyline = nil
+        stampPolyline = nil
+        stampMarkers.removeAll()
+
+        markerGeneration += 1
+        for viewState in views {
+            Task {
+                await viewState.destroy()
+            }
+        }
+        views.removeAll()
     }
 
     private func applyStrokeStyle(_ style: MPStrokeStyle, to polyline: GMSPolyline?, color: UIColor, path: GMSPath) {
@@ -582,7 +674,7 @@ class GMRouteRenderer: MPRouteRenderer {
     // Bumped by every pass that tears the markers down — apply(), applyMarkers() and clear(). renderMarker
     // builds its ViewState asynchronously, so without this a marker from a superseded pass would land in
     // `views` after the newer pass had already cleared them, leaving a duplicate pin the newer pass never
-    // destroys. Only ever touched on the main thread, so it needs no lock.
+    // destroys. Main-actor confined.
     private var markerGeneration = 0
 
     // Helper methods
@@ -590,10 +682,11 @@ class GMRouteRenderer: MPRouteRenderer {
         guard let model else { return }
         let generation = markerGeneration
         Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, let map = self.map else { return }
 
-            let s = await ViewState(viewModel: model, map: map!, is2dModelEnabled: false, isFloorPlanEnabled: false)
-            await s.computeDelta(newModel: model)
+            let s = await ViewState(viewModel: model, map: map, is2dModelEnabled: false, isFloorPlanEnabled: false)
+            // Route markers never render 2D models, so the zoom is read but unused; it is on main here anyway.
+            await s.computeDelta(newModel: model, cameraZoom: Double(map.camera.zoom))
             await s.applyDelta()
             // Superseded while this marker was being built: applyDelta has already put it on the map, so tear
             // it down here rather than adding it to a `views` that no longer describes what is drawn.
@@ -614,7 +707,6 @@ class GMRouteRenderer: MPRouteRenderer {
     private func createCameraPosition(for target: CLLocationCoordinate2D, zoom: Float, bearing: Double, tilt: Float) -> GMSCameraPosition {
         GMSCameraPosition(target: target, zoom: zoom, bearing: CLLocationDirection(floatLiteral: bearing), viewingAngle: Double(tilt))
     }
-
 }
 
 private enum MarkerType: String {

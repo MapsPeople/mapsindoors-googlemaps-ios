@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import os
 
 /// Remembers, per Google API key, whether the Routes API is usable.
 ///
@@ -26,25 +27,18 @@ enum GMGoogleRoutingCapability {
         case legacyOnly
     }
 
-    private static let lock = NSLock()
-    private static var states = [String: State]()
+    private static let states = OSAllocatedUnfairLock(initialState: [String: State]())
 
     static func state(for apiKey: String) -> State {
-        lock.lock()
-        defer { lock.unlock() }
-        return states[apiKey] ?? .unknown
+        states.withLock { $0[apiKey] ?? .unknown }
     }
 
     static func set(_ state: State, for apiKey: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        states[apiKey] = state
+        states.withLock { $0[apiKey] = state }
     }
 
     /// Test hook: forget all probe outcomes.
     static func reset() {
-        lock.lock()
-        defer { lock.unlock() }
-        states.removeAll()
+        states.withLock { $0.removeAll() }
     }
 }

@@ -1,8 +1,8 @@
 import Foundation
-import os
 import GameplayKit
-import GoogleMaps
+@preconcurrency import GoogleMaps
 @_spi(Private) import MapsIndoorsCore
+import os
 
 class Elem: NSObject {
     var min: (Float, Float) = (0.0, 0.0)

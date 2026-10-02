@@ -302,8 +302,10 @@ extension GMRoutesTransitDetails {
 
 // ISO8601DateFormatter is expensive to allocate and is parse-only here (no
 // per-call mutation), so the two variants are created once and shared.
-private let GMRoutesISO8601Formatter = ISO8601DateFormatter()
-private let GMRoutesISO8601FractionalFormatter: ISO8601DateFormatter = {
+// SAFETY: ISO8601DateFormatter is documented thread-safe, and neither instance is mutated after this
+// initialiser runs; `nonisolated(unsafe)` records that the sharing is deliberate rather than an oversight.
+nonisolated(unsafe) private let GMRoutesISO8601Formatter = ISO8601DateFormatter()
+nonisolated(unsafe) private let GMRoutesISO8601FractionalFormatter: ISO8601DateFormatter = {
     let formatter = ISO8601DateFormatter()
     // Some responses carry fractional seconds, which the default options reject.
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
