@@ -90,16 +90,19 @@ struct GoogleRoute: Codable {
         mpStep.duration = NSNumber(value: googleStep.duration?.value ?? 0)
         mpStep.distance = NSNumber(value: googleStep.distance?.value ?? 0)
 
-        let path = GMSPath(fromEncodedPath: googleStep.polyline!.points!)!
-
+        // Both the field and the decoding are optional in practice: the Routes API can omit
+        // the polyline for a step, and GMSPath rejects a malformed encoding. Either way the
+        // step keeps an empty geometry rather than taking down the app.
         var geometry = [MPRouteCoordinateInternal]()
-        for i in 0..<path.count() {
-            let c = path.coordinate(at: i)
-            let x = MPRouteCoordinateInternal()
-            x.lat = c.latitude as NSNumber
-            x.lng = c.longitude as NSNumber
-            x.zLevel = 0.0
-            geometry.append(x)
+        if let encodedPath = googleStep.polyline?.points, let path = GMSPath(fromEncodedPath: encodedPath) {
+            for i in 0..<path.count() {
+                let c = path.coordinate(at: i)
+                let x = MPRouteCoordinateInternal()
+                x.lat = c.latitude as NSNumber
+                x.lng = c.longitude as NSNumber
+                x.zLevel = 0.0
+                geometry.append(x)
+            }
         }
 
         mpStep.geometry = geometry

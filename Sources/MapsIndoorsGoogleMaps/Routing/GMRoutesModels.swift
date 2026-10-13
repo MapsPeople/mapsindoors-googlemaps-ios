@@ -248,8 +248,8 @@ extension GMRoutesStep {
             duration: GoogleDistance(text: nil, value: GMRoutesDurationSeconds(staticDuration)),
             endLocation: endLocation?.asLegacyCoordinate,
             htmlInstructions: navigationInstruction?.instructions,
-            // The legacy converter force-unwraps `polyline!.points!` — always
-            // provide a polyline, even when the field is absent in the response.
+            // An absent polyline becomes an empty encoding, which the legacy
+            // converter turns into a step with an empty geometry.
             polyline: GooglePolyline(points: polyline?.encodedPolyline ?? ""),
             startLocation: startLocation?.asLegacyCoordinate,
             travelMode: asLegacyTravelMode,

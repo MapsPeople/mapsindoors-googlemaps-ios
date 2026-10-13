@@ -396,11 +396,11 @@ final class GMRouteRenderer: MPRouteRenderer {
 
     nonisolated func moveCamera(points path: [CLLocationCoordinate2D], animate: Bool, durationMs: Int, tilt: Float, fitMode: MPCameraViewFitMode, padding: UIEdgeInsets, maxZoom: Double?) {
         Task { @MainActor in
-            self.moveCameraOnMain(points: path, tilt: tilt, fitMode: fitMode, padding: padding, maxZoom: maxZoom)
+            self.moveCameraOnMain(points: path, animate: animate, tilt: tilt, fitMode: fitMode, padding: padding, maxZoom: maxZoom)
         }
     }
 
-    private func moveCameraOnMain(points path: [CLLocationCoordinate2D], tilt: Float, fitMode: MPCameraViewFitMode, padding: UIEdgeInsets, maxZoom: Double?) {
+    private func moveCameraOnMain(points path: [CLLocationCoordinate2D], animate: Bool, tilt: Float, fitMode: MPCameraViewFitMode, padding: UIEdgeInsets, maxZoom: Double?) {
         guard let map, path.count >= 2 else { return }
 
         let bounds = MPGeoBounds(points: path)
@@ -412,17 +412,28 @@ final class GMRouteRenderer: MPRouteRenderer {
         case .northAligned:
             let zoom = min(adjustedZoom(path: path, heading: 0, insets: padding, tilt: 0), zoomCap)
             let pos = createCameraPosition(for: bounds.center.coordinate, zoom: zoom, bearing: 0, tilt: 0)
-            Task { @MainActor in map.animate(to: pos) }
+            Task { @MainActor in Self.move(map, to: pos, animate: animate) }
         case .firstStepAligned, .startToEndAligned:
             guard path.count >= 2 else { break }
             let bearing = fitMode == .firstStepAligned ? MPGeometryUtils.bearingBetweenPoints(from: path[0], to: path[1]) : MPGeometryUtils.bearingBetweenPoints(from: path[0], to: path.last!)
             let zoom = min(adjustedZoom(path: path, heading: bearing, insets: padding, tilt: tilt), zoomCap)
             let pos = createCameraPosition(for: bounds.center.coordinate, zoom: zoom, bearing: bearing, tilt: tilt)
-            Task { @MainActor in map.animate(to: pos) }
+            Task { @MainActor in Self.move(map, to: pos, animate: animate) }
         case .none:
             return
         default:
             break
+        }
+    }
+
+    /// `animate` is decided by the directions renderer (host flag plus Reduce Motion, SPEX-2060); the instant
+    /// path moves the camera in place. Either way it runs one hop after the fit computation, as it always has.
+    @MainActor
+    private static func move(_ map: GMSMapView, to position: GMSCameraPosition, animate: Bool) {
+        if animate {
+            map.animate(to: position)
+        } else {
+            map.moveCamera(GMSCameraUpdate.setCamera(position))
         }
     }
 

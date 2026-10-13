@@ -40,7 +40,7 @@ public class GoogleMapProvider: MPMapProvider, @unchecked Sendable {
     public var collisionHandling: MPCollisionHandling = .allowOverLap
 
     public var cameraOperator: MPCameraOperator {
-        GMCameraOperator(gmsView: mapView)
+        GMCameraOperator(gmsView: mapView, provider: self)
     }
 
     public var routeRenderer: MPRouteRenderer { _routeRenderer! }
@@ -177,6 +177,10 @@ public class GoogleMapProvider: MPMapProvider, @unchecked Sendable {
     // Unused: Google Maps markers are hit-tested by the engine's own marker delegate, so there is
     // no tolerance query to widen or narrow here.
     public var expandedTapAreaEnabled: Bool = true
+
+    /// Written by `MPMapControlInternal` when it is created and read by `GMCameraOperator` and the directions
+    /// renderer, all on the main actor (SPEX-2060).
+    public var cameraAnimationsEnabled: Bool = true
 
     // Unused
     public var wallExtrusionOpacity: Double = 0

@@ -2,6 +2,17 @@ import Foundation
 import GoogleMaps
 @_spi(Private) import MapsIndoorsCore
 
+/// The two camera verbs the operator uses, behind a protocol so a test can see which one a move took: a map view
+/// that is not on screen sometimes lands an animation instantly, so the camera state cannot tell the animated
+/// path from the instant one (SPEX-2060). `GMSMapView` has both verbs already.
+@MainActor
+protocol GMCameraDriving: AnyObject {
+    func moveCamera(_ update: GMSCameraUpdate)
+    func animate(with update: GMSCameraUpdate)
+}
+
+extension GMSMapView: GMCameraDriving {}
+
 /// Every camera call is deferred by one hop even though the operator is already on the main actor: that is how
 /// the class has always behaved (each method opened with a main-queue async), and callers such as the directions
 /// renderer rely on the camera move landing after the current turn's map mutations. The hop is a main-actor
@@ -9,9 +20,15 @@ import GoogleMaps
 @MainActor
 class GMCameraOperator: MPCameraOperator {
     private weak var map: GMSMapView?
+    /// Test injection point for the camera verbs; `nil` drives the map view (SPEX-2060).
+    var cameraDriverOverride: (any GMCameraDriving)?
+    /// SAFETY: written only by the initialiser, before the operator is handed out, and read only on the main
+    /// actor afterwards; `nonisolated(unsafe)` for the same reason as `MBCameraOperator.mapProvider`.
+    private nonisolated(unsafe) weak var mapProvider: MPMapProvider?
 
-    nonisolated required init(gmsView: GMSMapView?) {
+    nonisolated required init(gmsView: GMSMapView?, provider: MPMapProvider? = nil) {
         map = gmsView
+        mapProvider = provider
     }
 
     func move(target: CLLocationCoordinate2D, zoom: Float) {
@@ -40,7 +57,7 @@ class GMCameraOperator: MPCameraOperator {
                 bearing: bearing,
                 viewingAngle: viewingAngle
             )
-            self.map?.animate(to: position)
+            self.apply(GMSCameraUpdate.setCamera(position))
         }
     }
 
@@ -49,7 +66,7 @@ class GMCameraOperator: MPCameraOperator {
         let southWest = bounds.southWest
         Task { @MainActor in
             let b = GMSCoordinateBounds(coordinate: northEast, coordinate: southWest)
-            self.map?.animate(with: GMSCameraUpdate.fit(b))
+            self.apply(GMSCameraUpdate.fit(b))
         }
     }
 
@@ -60,7 +77,18 @@ class GMCameraOperator: MPCameraOperator {
                 longitude: target.longitude,
                 zoom: zoom ?? self.position.zoom
             )
-            self.map?.animate(to: position)
+            self.apply(GMSCameraUpdate.setCamera(position))
+        }
+    }
+
+    /// Animates `update` unless motion is not allowed for this map (host flag or Reduce Motion, see
+    /// `MPCameraMotion`), in which case the camera is moved in place (SPEX-2060).
+    private func apply(_ update: GMSCameraUpdate) {
+        guard let driver: any GMCameraDriving = cameraDriverOverride ?? map else { return }
+        if MPCameraMotion.shouldAnimate(for: mapProvider) {
+            driver.animate(with: update)
+        } else {
+            driver.moveCamera(update)
         }
     }
 
