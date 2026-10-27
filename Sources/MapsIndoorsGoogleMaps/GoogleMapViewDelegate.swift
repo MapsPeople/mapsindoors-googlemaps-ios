@@ -1,5 +1,6 @@
 import Foundation
 @preconcurrency import GoogleMaps
+@_spi(Private) import MapsIndoors
 import MapsIndoorsCore
 
 /// `@MainActor`: Google Maps delivers every `GMSMapViewDelegate` callback on the main thread, and the class
@@ -62,6 +63,9 @@ class GoogleMapViewDelegate: NSObject, @preconcurrency GMSMapViewDelegate {
 
         if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:willMove:))) {
             originalMapViewDelegate.mapView?(mapView, willMove: gesture)
+        }
+        if gesture {
+            mapsIndoorsDelegate?.cameraWillMoveByUserGesture()
         }
         mapsIndoorsDelegate?.cameraWillMove()
     }
@@ -158,17 +162,37 @@ class GoogleMapViewDelegate: NSObject, @preconcurrency GMSMapViewDelegate {
             originalMapViewDelegate.mapViewDidFinishTileRendering?(mapView)
         }
 
-        if didLoadStyling == false {
-            let bundles = Bundle.allBundles
-            for bundle in bundles {
-                if let styleUrl = bundle.url(forResource: "default_mapspeople_googlemaps_style", withExtension: "json") {
-                    if let mapStyle = try? GMSMapStyle(contentsOfFileURL: styleUrl) {
-                        mapView.mapStyle = mapStyle
-                        didLoadStyling = true
-                        break
-                    }
-                }
-            }
+        // Fallback only — the provider applies this at construction. Kept because it is the one callback
+        // guaranteed to fire even if the map view is handed over in an unusual state; `didLoadStyling`
+        // makes it a no-op in the normal case.
+        applyMapsPeopleStylingIfNeeded(to: mapView)
+    }
+
+    /// Applies the MapsPeople Google Maps styling, which is what removes Google's own POI icons.
+    ///
+    /// Idempotent, and deliberately callable before the map has rendered anything: the style is a JSON
+    /// file in the bundle, so it needs no network and nothing has to have loaded first. It used to be
+    /// applied from `mapViewDidFinishTileRendering`, which waits for *every tile to download and all
+    /// labels to render* — measured at ~12 s on a cold start. The map was long since on screen by then,
+    /// so applying the style blanked the whole map and removed a set of icons the user had been looking
+    /// at for ten seconds. Applying it up front means Google's icons are never shown in the first place.
+    func applyMapsPeopleStylingIfNeeded(to mapView: GMSMapView) {
+        guard didLoadStyling == false else { return }
+
+        // `MapsIndoorsBundle.bundle` resolves the framework's resource bundle by identifier. The
+        // `Bundle.allBundles` scan this used to rely on only finds `MapsIndoors.bundle` once something
+        // else has loaded it — which happens during the solution load, ~8 s into a cold start. So the
+        // early attempts silently found nothing and the style landed long after the map was on screen,
+        // stripping it in front of the user. `allBundles` is kept as a fallback, not the primary path.
+        let candidates = [MapsIndoorsBundle.bundle].compactMap { $0 } + Bundle.allBundles
+        for bundle in candidates {
+            guard let styleUrl = bundle.url(forResource: "default_mapspeople_googlemaps_style", withExtension: "json"),
+                let mapStyle = try? GMSMapStyle(contentsOfFileURL: styleUrl)
+            else { continue }
+
+            mapView.mapStyle = mapStyle
+            didLoadStyling = true
+            return
         }
     }
 

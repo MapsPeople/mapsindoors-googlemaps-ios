@@ -98,6 +98,17 @@ public class GoogleMapProvider: MPMapProvider, @unchecked Sendable {
             return mapViewDelegate
         }
 
+        // Before the map has drawn anything. This is what hides Google's own POI icons, and it is a
+        // bundled JSON file, so there is nothing to wait for. Left to its old trigger
+        // (`mapViewDidFinishTileRendering`) it lands only once every tile and label has rendered —
+        // ~12 s on a cold start — blanking a map the user is already looking at.
+        if let mapView = self.mapView {
+            // Same hop as the two calls above, for the same reason: the delegate is `@MainActor` and this
+            // initialiser is not, though it is reached on the main thread through
+            // `MPMapConfig(gmsMapView:googleApiKey:)`.
+            mpOnMainSync("GoogleMapProvider.init") { mapViewDelegate?.applyMapsPeopleStylingIfNeeded(to: mapView) }
+        }
+
         // Register the no-op base-map cache provider. `MapBoxProvider` registers its real
         // implementation on init; without a matching registration here, switching from the
         // Mapbox provider back to Google would leave the stale Mapbox provider registered,
@@ -181,6 +192,10 @@ public class GoogleMapProvider: MPMapProvider, @unchecked Sendable {
     /// Written by `MPMapControlInternal` when it is created and read by `GMCameraOperator` and the directions
     /// renderer, all on the main actor (SPEX-2060).
     public var cameraAnimationsEnabled: Bool = true
+
+    /// Stored for the protocol, but unused: Google Maps draws the info window into the map as an image, which
+    /// VoiceOver cannot focus, so the selection announcement speaks for it instead (SPEX-2065).
+    public var moveAccessibilityFocusToInfoWindow: Bool = true
 
     // Unused
     public var wallExtrusionOpacity: Double = 0

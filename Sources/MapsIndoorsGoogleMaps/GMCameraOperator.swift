@@ -61,6 +61,11 @@ class GMCameraOperator: MPCameraOperator {
         }
     }
 
+    func move(bounds: MPGeoBounds) {
+        let b = GMSCoordinateBounds(coordinate: bounds.northEast, coordinate: bounds.southWest)
+        map?.moveCamera(GMSCameraUpdate.fit(b))
+    }
+
     func animate(bounds: MPGeoBounds) {
         let northEast = bounds.northEast
         let southWest = bounds.southWest
