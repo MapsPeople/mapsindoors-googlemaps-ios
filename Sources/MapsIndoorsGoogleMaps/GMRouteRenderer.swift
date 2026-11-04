@@ -549,7 +549,9 @@ final class GMRouteRenderer: MPRouteRenderer {
     }
 
     private func groundResForLatitude(_ lat: Double, zoom: Double) -> Double {
-        let screenScale = UIScreen.main.scale
+        // The display the map view is on, not UIScreen.main (SPEX-2842). The shared resolver guards a
+        // zero trait and falls back through the window scene, so the ground resolution is never infinite.
+        let screenScale = MPDisplayScale.resolve(for: map)
         return GMRouteRenderer.metersPerPoint(lat: lat, zoom: zoom) / screenScale
     }
 
@@ -680,7 +682,8 @@ final class GMRouteRenderer: MPRouteRenderer {
         }
     }
 
-    private var views = [ViewState]()
+    /// The route markers on the map. Internal for tests.
+    private(set) var views = [ViewState]()
 
     // Bumped by every pass that tears the markers down — apply(), applyMarkers() and clear(). renderMarker
     // builds its ViewState asynchronously, so without this a marker from a superseded pass would land in

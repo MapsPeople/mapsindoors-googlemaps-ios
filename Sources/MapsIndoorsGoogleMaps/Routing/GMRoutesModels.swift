@@ -334,7 +334,8 @@ extension [GMRouteMatrixElement] {
 
         for element in self {
             guard let row = element.originIndex, let column = element.destinationIndex,
-                  grid.indices.contains(row), grid[row].indices.contains(column) else { continue }
+                grid.indices.contains(row), grid[row].indices.contains(column)
+            else { continue }
             grid[row][column] = GoogleMatrixElement(
                 distance: GoogleMatrixDistance(text: nil, value: element.distanceMeters ?? 0),
                 duration: GoogleMatrixDistance(text: nil, value: GMRoutesDurationSeconds(element.duration)),
