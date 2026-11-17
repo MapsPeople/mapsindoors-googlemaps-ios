@@ -95,7 +95,7 @@ class GoogleMapViewDelegate: NSObject, @preconcurrency GMSMapViewDelegate {
      */
 
     func mapView(_ mapView: GMSMapView, didTapInfoWindowOf marker: GMSMarker) {
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:markerInfoWindow:))) {
+        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didTapInfoWindowOf:))) {
             originalMapViewDelegate.mapView?(mapView, didTapInfoWindowOf: marker)
         }
 
@@ -205,9 +205,10 @@ class GoogleMapViewDelegate: NSObject, @preconcurrency GMSMapViewDelegate {
     func mapView(_ mapView: GMSMapView, didTap overlay: GMSOverlay) {
         guard overlay.isTappable else { return }
 
-        if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:didTap:))) {
-            originalMapViewDelegate.mapView?(mapView, didTap: overlay)
-        }
+        // No `responds(to:)` guard: in Swift the marker and overlay callbacks share the spelling `mapView(_:didTap:)`,
+        // and `#selector` picks the marker one, which is how this forward went dead (SPEX-3034). The optional call
+        // already does nothing when the host lacks the method.
+        originalMapViewDelegate?.mapView?(mapView, didTap: overlay)
 
         let id = overlay.locationId
         _ = mapsIndoorsDelegate?.didTap(locationId: id, type: overlay is GMSPolygon ? .polygon : .model2d)
@@ -241,7 +242,9 @@ class GoogleMapViewDelegate: NSObject, @preconcurrency GMSMapViewDelegate {
      */
 
     func didTapMyLocationButton(for mapView: GMSMapView) -> Bool {
-        originalMapViewDelegate?.didTapMyLocationButton?(for: mapView) == nil
+        // `true` tells Google the tap was handled, so it doesn't centre the map on the user. Without a host, or a host
+        // that doesn't answer, Google handles it (SPEX-3035).
+        originalMapViewDelegate?.didTapMyLocationButton?(for: mapView) ?? false
     }
 
     /**

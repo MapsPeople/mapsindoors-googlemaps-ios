@@ -53,12 +53,17 @@ class GMDistanceMatrixService: MPExternalDistanceMatrixService {
         destinations: [CLLocationCoordinate2D],
         config: MPDirectionsConfig
     ) async throws -> MPDistanceMatrixResult? {
-        let url = buildUrl(origins: origins, destinations: destinations, config: MPDirectionsConfig(origin: MPPoint(), destination: MPPoint()))
+        let url = legacyURL(origins: origins, destinations: destinations, config: config)
 
         let (data, _) = try await URLSession.shared.data(from: url)
         let deserializedResponse = try JSONDecoder().decode(GoogleDistanceMatrix.self, from: data)
 
         return deserializedResponse.asMPMatrix
+    }
+
+    /// The URL `legacyQuery` sends, built from the caller's config (SPEX-3038). Internal for tests.
+    func legacyURL(origins: [CLLocationCoordinate2D], destinations: [CLLocationCoordinate2D], config: MPDirectionsConfig) -> URL {
+        buildUrl(origins: origins, destinations: destinations, config: config)
     }
 
     private func buildUrl(origins: [CLLocationCoordinate2D], destinations: [CLLocationCoordinate2D], config: MPDirectionsConfig) -> URL {
@@ -81,7 +86,7 @@ class GMDistanceMatrixService: MPExternalDistanceMatrixService {
         destinationsString.removeLast()
         queryItems.append(URLQueryItem(name: "destinations", value: destinationsString))
 
-        queryItems.append(URLQueryItem(name: "language", value: language))
+        queryItems.append(URLQueryItem(name: "language", value: config.language ?? language))
 
         switch units {
         case .metric:
@@ -122,21 +127,17 @@ class GMDistanceMatrixService: MPExternalDistanceMatrixService {
         }
 
         if avoids.isEmpty == false {
-            var avoidsString = ""
-            for avoid in avoids {
+            // One `|`-joined item: appending inside the loop sent one item per avoid, each with the earlier ones
+            // run together without the separator.
+            let names = avoids.map { avoid in
                 switch avoid {
-                case .ferries:
-                    avoidsString.append("ferries|")
-                case .highways:
-                    avoidsString.append("highways|")
-                case .tolls:
-                    avoidsString.append("tolls|")
-                case .indoor:
-                    avoidsString.append("indoor|")
+                case .ferries: "ferries"
+                case .highways: "highways"
+                case .tolls: "tolls"
+                case .indoor: "indoor"
                 }
-                avoidsString.removeLast()
-                queryItems.append(URLQueryItem(name: "avoid", value: avoidsString))
             }
+            queryItems.append(URLQueryItem(name: "avoid", value: names.joined(separator: "|")))
         }
 
         switch trafficModel {
@@ -237,7 +238,7 @@ class GMDistanceMatrixService: MPExternalDistanceMatrixService {
         }
 
         // While the total size exceeds the max, we drop the last entry for the largest dimension
-        while resultingOrigins.count * resultingDestinations.count >= maxTotalElements {
+        while resultingOrigins.count * resultingDestinations.count > maxTotalElements {
             if resultingOrigins.count > resultingDestinations.count {
                 resultingOrigins = resultingOrigins.dropLast()
             } else {

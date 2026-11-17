@@ -30,7 +30,9 @@ class GMCameraPosition: MPCameraPosition {
         googleCameraPosition?.viewingAngle ?? 0
     }
 
-    weak var googleCameraPosition: GMSCameraPosition?
+    /// Held strongly: `GMSCameraPosition` is an immutable value object nothing else keeps alive once
+    /// `camera(for:inserts:)` or `camera(target:zoom:)` returns, so a weak reference read zeros (SPEX-3037).
+    let googleCameraPosition: GMSCameraPosition?
 
     public required init(cameraPosition: GMSCameraPosition?) {
         googleCameraPosition = cameraPosition

@@ -106,6 +106,10 @@ actor ViewState {
     private nonisolated let overlay2D = LockedObject<GMSGroundOverlay?>(value: nil)
     private nonisolated let infoWindowAnchorPoint = LockedObject<CGPoint?>(value: nil)
 
+    /// The area polygons and floor-plan walls on the map, read-only. For tests.
+    nonisolated var polygonOverlays: [GMSPolygon] { polygons.value }
+    nonisolated var floorPlanOverlays: [GMSPolygon] { floorPlanPolygons.value }
+
     private var is2dModelsEnabled = false
 
     private var isFloorPlanEnabled = false
@@ -278,8 +282,8 @@ actor ViewState {
         }
     }
 
-    nonisolated let floorPlanGeometriesShadow = LockedObject<[GMSPath]>(value: [])
-    var floorPlanGeometries: [GMSPath]? {
+    nonisolated let floorPlanGeometriesShadow = LockedObject<[PolygonRings]>(value: [])
+    var floorPlanGeometries: [PolygonRings]? {
         didSet {
             floorPlanGeometriesShadow.value = floorPlanGeometries ?? []
             deltaOperations.value[.floorplanGeometry] = { [weak self] map in
@@ -289,9 +293,9 @@ actor ViewState {
 
                 guard let floorPlanGeometries = self?.floorPlanGeometriesShadow.value, zindex.isFinite, zindex.isNaN == false else { return }
                 for geometry in floorPlanGeometries {
-                    if self?.floorPlanPolygons.value.contains(where: { $0.path?.encodedPath() == geometry.encodedPath() }) ?? true { continue }
+                    if self?.floorPlanPolygons.value.contains(where: { geometry.matches($0) }) ?? true { continue }
 
-                    let floorPlanPolygon = GMSPolygon(path: geometry)
+                    let floorPlanPolygon = geometry.makePolygon()
 
                     // To avoid having the polygon briefly with its default blue color, before our logic updates it (causes flashing) - we set a transparent color here
                     floorPlanPolygon.fillColor = self?.floorPlanFillColorShadow.value ?? .red.withAlphaComponent(0.0)
@@ -370,8 +374,8 @@ actor ViewState {
         }
     }
 
-    nonisolated let polygonGeometriesShadow = LockedObject<[GMSPath]>(value: [])
-    var polygonGeometries: [GMSPath]? {
+    nonisolated let polygonGeometriesShadow = LockedObject<[PolygonRings]>(value: [])
+    var polygonGeometries: [PolygonRings]? {
         didSet {
             polygonGeometriesShadow.value = polygonGeometries ?? []
             deltaOperations.value[.polygonGeometry] = { [weak self] map in
@@ -381,9 +385,9 @@ actor ViewState {
 
                 guard let polygonGeometries = self?.polygonGeometriesShadow.value, zindex.isFinite, zindex.isNaN == false else { return }
                 for geometry in polygonGeometries {
-                    if self?.polygons.value.contains(where: { $0.path?.encodedPath() == geometry.encodedPath() }) ?? true { continue }
+                    if self?.polygons.value.contains(where: { geometry.matches($0) }) ?? true { continue }
 
-                    let polygon = GMSPolygon(path: geometry)
+                    let polygon = geometry.makePolygon()
 
                     // To avoid having the polygon briefly with its default blue color, before our logic updates it (causes flashing) - we set a transparent color here
                     polygon.fillColor = self?.polygonFillColorShadow.value ?? .red.withAlphaComponent(0.0)
@@ -819,6 +823,59 @@ final class Model2DBundle: Sendable {
     }
 }
 
+/// One polygon of a feature's geometry, as Google Maps draws it: its outline and the holes cut out of it.
+///
+/// A GeoJSON polygon is a list of rings, the first its outline and the rest its holes. Each polygon of a
+/// `Polygon` or `MultiPolygon` feature becomes one of these, so a hole is cut out of its polygon rather than drawn
+/// as a filled polygon of its own (SPEX-3031).
+struct PolygonRings {
+    let outer: GMSPath
+    let holes: [GMSPath]
+    /// The outline then the holes, encoded once: what `matches` compares.
+    private let encoded: [String]
+
+    /// The polygons of a `Polygon` or `MultiPolygon` geometry, one per polygon. Empty for any other geometry, and
+    /// for the coordinate types `MPViewModelFeatureGeometry` accepts but the producer never writes (`MPPolygonGeometry`,
+    /// `[[[MPPoint]]]`, `MPMultiPolygonGeometry`), as before.
+    static func rings(of geometry: MPViewModelFeatureGeometry?) -> [PolygonRings] {
+        switch geometry?.coordinates {
+        case let rings as [[MPPoint]] where geometry?.type == .Polygon:
+            [PolygonRings(rings)].compactMap { $0 }
+        case let polygons as [MPPolygonGeometry] where geometry?.type == .MultiPolygon:
+            polygons.compactMap { PolygonRings($0.coordinates) }
+        default:
+            []
+        }
+    }
+
+    /// `nil` for a polygon with no rings.
+    init?(_ rings: [[MPPoint]]) {
+        let paths = rings.map { ring in
+            let path = GMSMutablePath()
+            for point in ring {
+                path.add(point.coordinate)
+            }
+            return path
+        }
+        guard let outer = paths.first else { return nil }
+        self.outer = outer
+        holes = Array(paths.dropFirst())
+        encoded = paths.map { $0.encodedPath() }
+    }
+
+    func makePolygon() -> GMSPolygon {
+        let polygon = GMSPolygon(path: outer)
+        polygon.holes = holes.isEmpty ? nil : holes
+        return polygon
+    }
+
+    /// Whether `polygon` already draws these rings: the same outline and the same holes, in order.
+    func matches(_ polygon: GMSPolygon) -> Bool {
+        let drawn = [polygon.path].compactMap { $0 } + (polygon.holes ?? [])
+        return drawn.count == encoded.count && zip(drawn, encoded).allSatisfy { $0.encodedPath() == $1 }
+    }
+}
+
 final class IconLabelBundle: Sendable {
     let icon: UIImage?
     let label: UIImage?
@@ -963,32 +1020,8 @@ extension MPViewModel {
         return .invisible
     }
 
-    var polygonGeometries: [GMSPath] {
-        var geometries = [GMSPath]()
-
-        if polygon?.geometry.type == .Polygon {
-            for polygon in polygon?.geometry.coordinates as? [[MPPoint]] ?? [] {
-                let path = GMSMutablePath()
-                for pathPoint in polygon {
-                    path.add(pathPoint.coordinate)
-                }
-                geometries.append(path)
-            }
-        }
-
-        if polygon?.geometry.type == .MultiPolygon {
-            for polygons in polygon?.geometry.coordinates as? [MPPolygonGeometry] ?? [] {
-                for polygon in polygons.coordinates {
-                    let path = GMSMutablePath()
-                    for pathPoint in polygon {
-                        path.add(pathPoint.coordinate)
-                    }
-                    geometries.append(path)
-                }
-            }
-        }
-
-        return geometries
+    var polygonGeometries: [PolygonRings] {
+        PolygonRings.rings(of: polygon?.geometry)
     }
 
     var floorPlanState: PolygonState {
@@ -1000,32 +1033,10 @@ extension MPViewModel {
         }
     }
 
-    var floorPlanGeometries: [GMSPath] {
-        var geometries = [GMSPath]()
-
-        if floorPlanExtrusion?.geometry.type == .Polygon {
-            for polygon in floorPlanExtrusion?.geometry.coordinates as? [[MPPoint]] ?? [] {
-                let path = GMSMutablePath()
-                for pathPoint in polygon {
-                    path.add(pathPoint.coordinate)
-                }
-                geometries.append(path)
-            }
-        }
-
-        if floorPlanExtrusion?.geometry.type == .MultiPolygon {
-            for polygons in floorPlanExtrusion?.geometry.coordinates as? [MPPolygonGeometry] ?? [] {
-                for polygon in polygons.coordinates {
-                    let path = GMSMutablePath()
-                    for pathPoint in polygon {
-                        path.add(pathPoint.coordinate)
-                    }
-                    geometries.append(path)
-                }
-            }
-        }
-
-        return geometries
+    /// Empty for a floor plan produced outside its zoom range: Google has no zoom filter, so it draws only one in range.
+    var floorPlanGeometries: [PolygonRings] {
+        guard floorPlanExtrusion?.properties[.floorPlanInRange] as? Bool != false else { return [] }
+        return PolygonRings.rings(of: floorPlanExtrusion?.geometry)
     }
 
     var floorPlanFillColor: UIColor? {
@@ -1276,9 +1287,9 @@ extension UIImage {
 ///
 /// SAFETY: the reference itself is only ever read or written under the lock, which is what `Sendable` promises
 /// here. It says nothing about the boxed value: most boxes hold Google Maps objects (`GMSMarker`, `GMSPolygon`,
-/// `GMSGroundOverlay`, `GMSPath`) which are main-thread objects, and every site that touches one of those
-/// *through* the box does so on the main actor (the delta closures) or only compares / reads a scalar off it
-/// (`OverlapEngine`). The scalar and image boxes (`Bool`, `Double`, `CGPoint`, `UIImage?`, enums) are values.
+/// `GMSGroundOverlay`, `PolygonRings` around `GMSPath`s), which are main-thread objects, and every site that touches
+/// one of those *through* the box does so on the main actor (the delta closures) or only compares / reads a scalar
+/// off it (`OverlapEngine`). The scalar and image boxes (`Bool`, `Double`, `CGPoint`, `UIImage?`, enums) are values.
 /// A new box holding a mutable non-UI reference would need its own argument before joining this list.
 final class LockedObject<T>: @unchecked Sendable {
     private let storage: OSAllocatedUnfairLock<T>

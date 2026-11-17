@@ -403,26 +403,53 @@ final class GMRouteRenderer: MPRouteRenderer {
     private func moveCameraOnMain(points path: [CLLocationCoordinate2D], animate: Bool, tilt: Float, fitMode: MPCameraViewFitMode, padding: UIEdgeInsets, maxZoom: Double?) {
         guard let map, path.count >= 2 else { return }
 
-        let bounds = MPGeoBounds(points: path)
-        // Cap the fitted zoom so a short leg can't zoom in past fitBoundsMaxZoom / automatedZoomLimit.
-        let zoomCap = maxZoom.map { Float($0) } ?? .greatestFiniteMagnitude
-
-        // The camera move itself stays one hop later than the fit computation, as it always was.
+        let bearing: CLLocationDirection
+        let viewingAngle: Float
         switch fitMode {
         case .northAligned:
-            let zoom = min(adjustedZoom(path: path, heading: 0, insets: padding, tilt: 0), zoomCap)
-            let pos = createCameraPosition(for: bounds.center.coordinate, zoom: zoom, bearing: 0, tilt: 0)
-            Task { @MainActor in Self.move(map, to: pos, animate: animate) }
-        case .firstStepAligned, .startToEndAligned:
-            guard path.count >= 2 else { break }
-            let bearing = fitMode == .firstStepAligned ? MPGeometryUtils.bearingBetweenPoints(from: path[0], to: path[1]) : MPGeometryUtils.bearingBetweenPoints(from: path[0], to: path.last!)
-            let zoom = min(adjustedZoom(path: path, heading: bearing, insets: padding, tilt: tilt), zoomCap)
-            let pos = createCameraPosition(for: bounds.center.coordinate, zoom: zoom, bearing: bearing, tilt: tilt)
-            Task { @MainActor in Self.move(map, to: pos, animate: animate) }
+            (bearing, viewingAngle) = (0, 0)
+        case .firstStepAligned:
+            (bearing, viewingAngle) = (MPGeometryUtils.bearingBetweenPoints(from: path[0], to: path[1]), tilt)
+        case .startToEndAligned:
+            (bearing, viewingAngle) = (MPGeometryUtils.bearingBetweenPoints(from: path[0], to: path.last!), tilt)
         case .none:
             return
         default:
-            break
+            return
+        }
+
+        // The map's own padding (`MPMapControl.mapPadding` lives on `GMSMapView.padding`) is not in `padding`. Once
+        // the map is on screen, Google already shows the camera target at the centre of the area that padding
+        // leaves, so the fit sizes the route by it but pushes the target for the route padding only. Google also
+        // clamps the camera to the map's zoom range, so the fit clamps the same way before it pushes the target.
+        // A host `maxZoom` below the map's minimum (or NaN) fits at the minimum rather than trapping on the range.
+        let lowest = Double(map.minZoom)
+        let highest = max(lowest, maxZoom.map { min($0, Double(map.maxZoom)) } ?? Double(map.maxZoom))
+        let fit = Self.fit(
+            path: path, heading: bearing, insets: padding, viewportInsets: Self.viewportInsets(of: map), tilt: viewingAngle, zoomRange: lowest...highest,
+            in: map.bounds.size)
+        let pos = createCameraPosition(for: fit.target, zoom: fit.zoom, bearing: bearing, tilt: viewingAngle)
+        // The camera move itself stays one hop later than the fit computation, as it always was.
+        Task { @MainActor in Self.move(map, to: pos, animate: animate) }
+    }
+
+    /// The part of the map Google draws into, as insets from the view's edges: `GMSMapView.padding` with the safe
+    /// area that `paddingAdjustmentBehavior` adds to it (`.always` by default), the way Google lays the map out.
+    private static func viewportInsets(of map: GMSMapView) -> UIEdgeInsets {
+        let (padding, safeArea) = (map.padding, map.safeAreaInsets)
+        switch map.paddingAdjustmentBehavior {
+        case .always:
+            return UIEdgeInsets(
+                top: padding.top + safeArea.top, left: padding.left + safeArea.left, bottom: padding.bottom + safeArea.bottom,
+                right: padding.right + safeArea.right)
+        case .automatic:
+            return UIEdgeInsets(
+                top: max(padding.top, safeArea.top), left: max(padding.left, safeArea.left), bottom: max(padding.bottom, safeArea.bottom),
+                right: max(padding.right, safeArea.right))
+        case .never:
+            return padding
+        @unknown default:
+            return padding
         }
     }
 
@@ -437,80 +464,57 @@ final class GMRouteRenderer: MPRouteRenderer {
         }
     }
 
-    private func adjustedZoom(path: [CLLocationCoordinate2D], heading: CLLocationDirection, insets: UIEdgeInsets, tilt: Float) -> Float {
-        guard let map else { return 0 }
-
-        // Get center in WGS84, height and width in meters of the path
-        let centerAndWidth = centerAndWidthOfPath(path, seenFromHeading: heading)
-        let centerAndHeight = centerAndWidthOfPath(path, seenFromHeading: heading + 90)
-
-        // Calculate a size factor for width and height
-        let widthFactor = widthFactor(centerAndWidth: centerAndWidth)
-        let heightFactor = heightFactor(centerAndHeight: centerAndHeight)
-
-        // Derive zoom factor and zoom as the smallest factor:
-        // below 1 we will zoom out,
-        // above 1 we will zoom in
-        var zoomFactor = min(widthFactor, heightFactor)
-        let zoom = map.camera.zoom + log2(Float(zoomFactor))
-
-        // Calculate ground resolution for the calculated zoom
-        let groundResolution = groundResForLatitude(map.camera.target.latitude, zoom: Double(zoom))
-
-        // For tilted fit modes (.firstStepAligned/.startToEndAligned)
-        // perspective projection stretches the along-bearing extent of
-        // the route on screen relative to its geographic distance —
-        // the near half occupies more vertical pixels than the
-        // orthographic calculation suggests. Apply the same 1.2x
-        // safety margin to the along-bearing dimension that already
-        // exists for the perpendicular one, but only when tilt > 0,
-        // so .northAligned (the orthographic case) keeps its current
-        // behavior.
-        let heightMargin: Double = tilt > 0 ? 1.2 : 1.0
-
-        // Calculate adjusted height and width based on insets
-        let adjustedHeightDist = centerAndHeight.distance * heightMargin + groundResolution * insets.bottom + groundResolution * insets.top
-        let adjustedWidthDist = centerAndWidth.distance * 1.2 + groundResolution * insets.left + groundResolution * insets.right
-
-        // Calculate a size factor for width and height
-        let adjustedHeightFactor = centerAndHeight.distance / adjustedHeightDist
-        let adjustedWidthFactor = centerAndWidth.distance / adjustedWidthDist
-
-        // Derive zoom factor and zoom as the smallest factor:
-        zoomFactor = min(adjustedWidthFactor, adjustedHeightFactor)
-        return zoom + log2(Float(zoomFactor))
-    }
-
-    struct PointDistanceResult {
-        var position: CLLocationCoordinate2D
-        var distance: CLLocationDistance
-    }
-
-    private func widthFactor(centerAndWidth: PointDistanceResult) -> Double {
-        guard let map else { return 1 }
-
-        let visibleRegion = map.projection.visibleRegion()
-        let left = GMSGeometryInterpolate(visibleRegion.farLeft, visibleRegion.nearLeft, 0.5)
-        let right = GMSGeometryInterpolate(visibleRegion.farRight, visibleRegion.nearRight, 0.5)
-        let mapWidthDist = GMSGeometryDistance(left, right)
-        return mapWidthDist / centerAndWidth.distance
-    }
-
-    private func heightFactor(centerAndHeight: PointDistanceResult) -> Double {
-        guard let map else { return 1 }
-
-        let visibleRegion = map.projection.visibleRegion()
-        let top = GMSGeometryInterpolate(visibleRegion.farLeft, visibleRegion.farRight, 0.5)
-        let bottom = GMSGeometryInterpolate(visibleRegion.nearLeft, visibleRegion.nearRight, 0.5)
-        let mapHeightDist = GMSGeometryDistance(top, bottom)
-        return mapHeightDist / centerAndHeight.distance
-    }
-
-    private func centerAndWidthOfPath(_ path: [CLLocationCoordinate2D], seenFromHeading heading: CLLocationDirection) -> PointDistanceResult {
+    /// The camera target and zoom that show `path` inside the part of a map of `size` points that `viewportInsets`
+    /// and then `insets` leave, looking along `heading`, within `zoomRange`.
+    ///
+    /// Everything is in screen points (SPEX-3036). The route's extent across and along the heading is measured in
+    /// metres, the space the insets leave in points, and the zoom is the one at which the tighter of the two fits.
+    /// The target is the centre of the route's extent, pushed away from the larger of opposite `insets` by half their
+    /// difference, so the route sits in the middle of the padded area. `viewportInsets` (the map's own padding) only
+    /// size: Google already shows the target at the centre of the area they leave.
+    private nonisolated static func fit(
+        path: [CLLocationCoordinate2D], heading: CLLocationDirection, insets: UIEdgeInsets, viewportInsets: UIEdgeInsets, tilt: Float,
+        zoomRange: ClosedRange<Double>, in size: CGSize
+    ) -> (target: CLLocationCoordinate2D, zoom: Float) {
         let center = centerOfPath(path)
+        let across = extent(of: path, from: center, acrossHeading: heading)
+        let along = extent(of: path, from: center, acrossHeading: heading + 90)
 
-        var bestLeftDist: CLLocationDistance = 0
-        var bestRightDist: CLLocationDistance = 0
+        // The centre of the route's extent in the heading's frame: the geometric centre moved to the middle of each
+        // extent, which the lat/lng bounds' centre only is when the heading is north.
+        var centre = GMSGeometryOffset(center, (across.right - across.left) / 2, heading + 90)
+        centre = GMSGeometryOffset(centre, (along.right - along.left) / 2, heading + 180)
+
+        // A fifth of margin across the heading, and along it when the camera is tilted: perspective stretches the
+        // near half of the route on screen past what the flat projection says.
+        let routeWidth = (across.left + across.right + 0.2) * 1.2
+        let routeHeight = (along.left + along.right + 0.2) * (tilt > 0 ? 1.2 : 1.0)
+
+        // The space the insets leave, never below a point so a map that has no size yet still gets a finite zoom.
+        let availableWidth = max(Double(size.width - viewportInsets.left - viewportInsets.right - insets.left - insets.right), 1)
+        let availableHeight = max(Double(size.height - viewportInsets.top - viewportInsets.bottom - insets.top - insets.bottom), 1)
+
+        // Metres per point halve with every zoom level, so the zoom that spreads the route over the space it has
+        // is log2 of their ratio at zoom 0.
+        let pointsPerMetre = min(availableWidth / routeWidth, availableHeight / routeHeight)
+        // Clamped to the zoom the camera can end up at (fitBoundsMaxZoom / automatedZoomLimit and the map's own
+        // range), since the push below is in points at that zoom; a short leg otherwise zooms in past them and
+        // its push shrinks by the difference.
+        let zoom = min(max(log2(metersPerPoint(lat: centre.latitude, zoom: 0) * pointsPerMetre), zoomRange.lowerBound), zoomRange.upperBound)
+
+        // The padded area's centre is half the inset difference right of and below the centre of the map's own
+        // viewport, which is where the target shows; so the target is that far left of (heading - 90) and above
+        // (heading) the route's centre.
+        let metresPerPoint = metersPerPoint(lat: centre.latitude, zoom: zoom)
+        var target = GMSGeometryOffset(centre, Double(insets.left - insets.right) / 2 * metresPerPoint, heading - 90)
+        target = GMSGeometryOffset(target, Double(insets.top - insets.bottom) / 2 * metresPerPoint, heading)
+        return (target, Float(zoom))
+    }
+
+    /// How far `path` reaches to the left and to the right of `heading`, in metres from `center`.
+    private nonisolated static func extent(of path: [CLLocationCoordinate2D], from center: CLLocationCoordinate2D, acrossHeading heading: CLLocationDirection) -> (left: CLLocationDistance, right: CLLocationDistance) {
+        var left: CLLocationDistance = 0
+        var right: CLLocationDistance = 0
         for coordinate in path {
             let hypotenuseDist = GMSGeometryDistance(center, coordinate)
             let hypotenuseHeading = GMSGeometryHeading(center, coordinate)
@@ -520,21 +524,16 @@ final class GMRouteRenderer: MPRouteRenderer {
             // Swap Sides:   perpendicularDist/hypotenuseDist    = sin(relativeHeading)
             // Thus:
             let perpendicularDist = sin(relativeHeading.radians) * hypotenuseDist
-            if perpendicularDist > 0, perpendicularDist > bestRightDist {
-                bestRightDist = perpendicularDist
-            } else if -perpendicularDist > bestLeftDist {
-                bestLeftDist = -perpendicularDist
+            if perpendicularDist > 0 {
+                right = max(right, perpendicularDist)
+            } else {
+                left = max(left, -perpendicularDist)
             }
         }
-
-        let distance = bestLeftDist + bestRightDist + 0.2
-        let recenterHeading = heading + (bestRightDist > bestLeftDist ? 90 : -90)
-        let position = GMSGeometryOffset(center, max(bestLeftDist, bestRightDist) - distance * 0.5, recenterHeading)
-
-        return PointDistanceResult(position: position, distance: distance)
+        return (left, right)
     }
 
-    private func centerOfPath(_ path: [CLLocationCoordinate2D]) -> CLLocationCoordinate2D {
+    private nonisolated static func centerOfPath(_ path: [CLLocationCoordinate2D]) -> CLLocationCoordinate2D {
         let gmsPath = GMSMutablePath()
         for coordinate in path {
             gmsPath.add(coordinate)
@@ -544,15 +543,8 @@ final class GMRouteRenderer: MPRouteRenderer {
     }
 
     /// Web-Mercator ground resolution at `zoom`: metres per screen point, on the 256 pt tile convention.
-    private static func metersPerPoint(lat: Double, zoom: Double) -> Double {
+    private nonisolated static func metersPerPoint(lat: Double, zoom: Double) -> Double {
         156543.03392 * cos(lat.radians) / pow(2, zoom)
-    }
-
-    private func groundResForLatitude(_ lat: Double, zoom: Double) -> Double {
-        // The display the map view is on, not UIScreen.main (SPEX-2842). The shared resolver guards a
-        // zero trait and falls back through the window scene, so the ground resolution is never infinite.
-        let screenScale = MPDisplayScale.resolve(for: map)
-        return GMRouteRenderer.metersPerPoint(lat: lat, zoom: zoom) / screenScale
     }
 
     nonisolated func clear() {
