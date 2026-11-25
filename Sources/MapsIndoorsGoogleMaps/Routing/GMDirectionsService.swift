@@ -8,35 +8,11 @@ enum GoogleTravelModes {
     case transit
 }
 
-enum GoogleTransitModes {
-    case bus
-    case subway
-    case train
-    case tram
-    case rail
-}
-
 enum GoogleAvoids {
     case tolls
     case highways
     case ferries
     case indoor
-}
-
-enum GoogleTrafficModels {
-    case bestGuess
-    case pessimistic
-    case optimistic
-}
-
-enum GoogleRoutingPreference {
-    case lessWalking
-    case fewerTransfers
-}
-
-enum GoogleRoutingUnits {
-    case metric
-    case imperial
 }
 
 class GMDirectionsService: MPExternalDirectionsService {
@@ -46,13 +22,8 @@ class GMDirectionsService: MPExternalDirectionsService {
 
     var language = "en"
 
-    var units: GoogleRoutingUnits = .metric
-
     var travelMode: GoogleTravelModes = .driving
-    var transitMode: GoogleTransitModes = .bus
     var avoids = [GoogleAvoids]()
-    var trafficModel: GoogleTrafficModels = .bestGuess
-    var routingPreference: GoogleRoutingPreference = .lessWalking
 
     required init(apiKey: String) {
         self.apiKey = apiKey
@@ -87,7 +58,8 @@ class GMDirectionsService: MPExternalDirectionsService {
         return mpRoute
     }
 
-    private func buildUrl(origin: CLLocationCoordinate2D, destination: CLLocationCoordinate2D, config: MPDirectionsConfig) -> URL {
+    /// The legacy Directions request URL. Internal for tests.
+    func buildUrl(origin: CLLocationCoordinate2D, destination: CLLocationCoordinate2D, config: MPDirectionsConfig) -> URL {
         applyConfig(config: config)
 
         var components = URLComponents(string: baseUrl)!
@@ -97,12 +69,7 @@ class GMDirectionsService: MPExternalDirectionsService {
 
         queryItems.append(URLQueryItem(name: "language", value: config.language ?? language))
 
-        switch units {
-        case .metric:
-            queryItems.append(URLQueryItem(name: "units", value: "metric"))
-        case .imperial:
-            queryItems.append(URLQueryItem(name: "units", value: "imperial"))
-        }
+        queryItems.append(URLQueryItem(name: "units", value: "metric"))
 
         if let arrivalTime = config.arrival {
             queryItems.append(URLQueryItem(name: "arrival_time", value: String(Int(arrivalTime.timeIntervalSince1970) + 10)))
@@ -121,18 +88,7 @@ class GMDirectionsService: MPExternalDirectionsService {
             queryItems.append(URLQueryItem(name: "mode", value: "bicycling"))
         case .transit:
             queryItems.append(URLQueryItem(name: "mode", value: "transit"))
-            switch transitMode {
-            case .bus:
-                queryItems.append(URLQueryItem(name: "transit_mode", value: "bus"))
-            case .subway:
-                queryItems.append(URLQueryItem(name: "transit_mode", value: "subway"))
-            case .train:
-                queryItems.append(URLQueryItem(name: "transit_mode", value: "train"))
-            case .tram:
-                queryItems.append(URLQueryItem(name: "transit_mode", value: "tram"))
-            case .rail:
-                queryItems.append(URLQueryItem(name: "transit_mode", value: "rail"))
-            }
+            queryItems.append(URLQueryItem(name: "transit_mode", value: "bus"))
         }
 
         if avoids.isEmpty == false {
@@ -153,21 +109,8 @@ class GMDirectionsService: MPExternalDirectionsService {
             }
         }
 
-        switch trafficModel {
-        case .bestGuess:
-            queryItems.append(URLQueryItem(name: "traffic_model", value: "best_guess"))
-        case .pessimistic:
-            queryItems.append(URLQueryItem(name: "traffic_model", value: "pessimistic"))
-        case .optimistic:
-            queryItems.append(URLQueryItem(name: "traffic_model", value: "optimistic"))
-        }
-
-        switch routingPreference {
-        case .lessWalking:
-            queryItems.append(URLQueryItem(name: "transit_routing_preference", value: "less_walking"))
-        case .fewerTransfers:
-            queryItems.append(URLQueryItem(name: "transit_routing_preference", value: "fewer_transfers"))
-        }
+        queryItems.append(URLQueryItem(name: "traffic_model", value: "best_guess"))
+        queryItems.append(URLQueryItem(name: "transit_routing_preference", value: "less_walking"))
 
         queryItems.append(URLQueryItem(name: "key", value: apiKey))
 

@@ -23,6 +23,10 @@ actor Renderer {
     // Keeping track of active view states (things in view)
     private var views = [String: ViewState]()
 
+    /// Test instrumentation: the model ids of the view states this renderer currently keeps. Read-only, so
+    /// `GoogleMapProviderConcurrencyTests` can prove its renders really create and destroy view states.
+    var liveViewStateIds: Set<String> { Set(views.keys) }
+
     private let overlapEngine = OverlapEngine()
 
     // Renders are serialized one layer up, in `GoogleMapProvider.setViewModels`,
@@ -49,17 +53,6 @@ actor Renderer {
         let newSet = Set<String>(ids)
         let oldSet = Set<String>(views.keys)
         let noLongerInView = oldSet.subtracting(newSet)
-
-        // Compute which view state instances are in view
-        var viewStatesInView = [ViewState]()
-        viewStatesInView.reserveCapacity(ids.count)
-        for modelId in ids {
-            if let viewState = views[modelId] {
-                viewStatesInView.append(viewState)
-            }
-        }
-
-        try Task.checkCancellation()
 
         if let projection = await stage0AcquireProjection()?.projection {
             try Task.checkCancellation()

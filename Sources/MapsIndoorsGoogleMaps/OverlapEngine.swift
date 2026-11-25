@@ -4,44 +4,6 @@ import GameplayKit
 @_spi(Private) import MapsIndoorsCore
 import os
 
-class Elem: NSObject {
-    var min: (Float, Float) = (0.0, 0.0)
-    var max: (Float, Float) = (0.0, 0.0)
-
-    let id: String
-
-    required init(id: String, min: (Float, Float) = (0, 0), max: (Float, Float) = (0, 0)) {
-        self.min = min
-        self.max = max
-        self.id = id
-    }
-
-    var minFloat: vector_float2 {
-        return vector_float2(min.0, min.1)
-    }
-
-    var maxFloat: vector_float2 {
-        return vector_float2(max.0, max.1)
-    }
-
-    // MARK: - NSObject Overrides (Important for consistent behavior)
-
-    override func isEqual(_ object: Any?) -> Bool {
-        guard let other = object as? Elem else {
-            return false
-        }
-        return self.id == other.id
-    }
-
-    override var hash: Int {
-        return id.hashValue
-    }
-
-    override var description: String {
-        return "Elem(min: \(min), max: \(max))"
-    }
-}
-
 actor OverlapEngine {
     private let intersectionThreshold = 0.15  // percent
 
@@ -80,12 +42,7 @@ actor OverlapEngine {
         for view in views {
             try Task.checkCancellation()
             if let current = self.entries[view.id], let bounds = await current.viewState.bounds {
-                var collisions = [Entry]()
-                tree.withLockUnchecked { tree in
-                    collisions.append(contentsOf: tree?.elements(in: GKQuad(quadMin: bounds.gkBoundingBoxMin, quadMax: bounds.gkBoundingBoxMax)) ?? [])
-                }
-
-                for hit in collisions {
+                for hit in entries(in: bounds) {
                     try Task.checkCancellation()
                     guard hit.id != current.id else { continue }
                     let (winner, loser) = self.decideCollision(a: current, b: hit)
@@ -248,6 +205,13 @@ actor OverlapEngine {
 
                 entry.nodes.append(contentsOf: [_1, _2, _3, _4, _5, _6, _7, _8, _9].compactMap { $0 })
             }
+        }
+    }
+
+    /// The entries with a hit point inside `bounds`: the view states a marker with these bounds may collide with.
+    func entries(in bounds: CGRect) -> [Entry] {
+        tree.withLockUnchecked { tree in
+            tree?.elements(in: GKQuad(quadMin: bounds.gkBoundingBoxMin, quadMax: bounds.gkBoundingBoxMax)) ?? []
         }
     }
 

@@ -74,6 +74,13 @@ class GMRoutesService {
     }
 
     func computeRoute(origin: CLLocationCoordinate2D, destination: CLLocationCoordinate2D, config: MPDirectionsConfig) async throws -> GoogleRouteResponse {
+        let request = Self.routeRequest(origin: origin, destination: destination, config: config)
+        let data = try await post(to: Self.computeRoutesURL, body: request, fieldMask: Self.routesFieldMask)
+        return try JSONDecoder().decode(GMComputeRoutesResponse.self, from: data).asLegacyRouteResponse
+    }
+
+    /// The computeRoutes request body for a query. Internal for tests.
+    static func routeRequest(origin: CLLocationCoordinate2D, destination: CLLocationCoordinate2D, config: MPDirectionsConfig) -> GMComputeRoutesRequest {
         let travelMode = Self.travelMode(for: config)
         var request = GMComputeRoutesRequest(
             origin: GMRoutesWaypoint(coordinate: origin.latitude, origin.longitude),
@@ -103,16 +110,21 @@ class GMRoutesService {
             // (it hardcoded `transit_mode=bus`) — all transit modes are allowed.
             request.transitPreferences = GMRoutesTransitPreferences(routingPreference: "LESS_WALKING")
         }
-
-        let data = try await post(to: Self.computeRoutesURL, body: request, fieldMask: Self.routesFieldMask)
-        return try JSONDecoder().decode(GMComputeRoutesResponse.self, from: data).asLegacyRouteResponse
+        return request
     }
 
     func computeRouteMatrix(origins: [CLLocationCoordinate2D], destinations: [CLLocationCoordinate2D], config: MPDirectionsConfig) async throws -> GoogleDistanceMatrix {
-        // computeRouteMatrix rejects TRANSIT (400) — unlike computeRoutes it only
-        // accepts DRIVE/WALK/BICYCLE/TWO_WHEELER. The legacy matrix ignored travel
-        // mode entirely (it defaulted to driving), so coerce transit to driving
-        // here to preserve that behavior rather than hard-failing the request.
+        let request = Self.routeMatrixRequest(origins: origins, destinations: destinations, config: config)
+        let data = try await post(to: Self.computeRouteMatrixURL, body: request, fieldMask: Self.matrixFieldMask)
+        let elements = try JSONDecoder().decode([GMRouteMatrixElement].self, from: data)
+        return elements.asLegacyDistanceMatrix(originCount: origins.count, destinationCount: destinations.count)
+    }
+
+    /// The computeRouteMatrix request body for a query. Internal for tests.
+    static func routeMatrixRequest(origins: [CLLocationCoordinate2D], destinations: [CLLocationCoordinate2D], config: MPDirectionsConfig) -> GMComputeRouteMatrixRequest {
+        // computeRouteMatrix rejects TRANSIT (400) — unlike computeRoutes and the
+        // legacy matrix it only accepts DRIVE/WALK/BICYCLE/TWO_WHEELER — so coerce
+        // transit to driving here rather than hard-failing the request.
         let travelMode = Self.matrixTravelMode(for: config)
         // The matrix attaches route modifiers to each origin (not the request),
         // so compute them once and apply to every origin waypoint.
@@ -130,10 +142,7 @@ class GMRoutesService {
             request.departureTime = Self.futureDeparture(config.departure)
             request.routingPreference = "TRAFFIC_AWARE"
         }
-
-        let data = try await post(to: Self.computeRouteMatrixURL, body: request, fieldMask: Self.matrixFieldMask)
-        let elements = try JSONDecoder().decode([GMRouteMatrixElement].self, from: data)
-        return elements.asLegacyDistanceMatrix(originCount: origins.count, destinationCount: destinations.count)
+        return request
     }
 
     // MARK: - Request plumbing
@@ -190,9 +199,8 @@ class GMRoutesService {
     }
 
     /// The Routes API computeRouteMatrix endpoint accepts only
-    /// DRIVE/WALK/BICYCLE/TWO_WHEELER — a TRANSIT matrix request returns 400. The
-    /// legacy matrix ignored travel mode (it defaulted to driving), so transit is
-    /// coerced to driving to keep matrix requests working instead of failing.
+    /// DRIVE/WALK/BICYCLE/TWO_WHEELER — a TRANSIT matrix request returns 400 — so
+    /// transit is coerced to driving to keep matrix requests working instead of failing.
     static func matrixTravelMode(for config: MPDirectionsConfig) -> String {
         let mode = travelMode(for: config)
         return mode == "TRANSIT" ? "DRIVE" : mode

@@ -86,9 +86,6 @@ enum PolygonState {
  If the "on-map" state of a feature differs from that of the view model, we compute a set of operations required to make the two states equal.
  */
 actor ViewState {
-    // Usefull debug flag, drawing a red box around a marker/label - which makes debugging collisions/clustering easier to visualize
-    static let debugDrawImageBorder = false
-
     private weak var map: GMSMapView?
     let id: String
 
@@ -99,6 +96,10 @@ actor ViewState {
     /// closures replace the main-queue sync each one used to open with: the hop is made once per view state,
     /// with `MainActor.run`, instead of once per operation from inside actor-isolated code.
     private nonisolated let deltaOperations = LockedObject<[StateOperation: @MainActor @Sendable (GMSMapView?) -> Void]>(value: [:])
+
+    /// The characteristics the next `applyDelta()` will change, as `computeDelta` and `setMarkerState` recorded
+    /// them. Read by the tests, which otherwise could not tell what a view model caused.
+    nonisolated var pendingOperations: Set<StateOperation> { Set(deltaOperations.value.keys) }
 
     nonisolated let marker = LockedObject<GMSMarker?>(value: nil)
     private nonisolated let polygons = LockedObject<[GMSPolygon]>(value: [])
@@ -159,11 +160,11 @@ actor ViewState {
             markerStateShadow.value = markerState
             switch markerState {
             case .visibleIconLabel:
-                markerIcon = imageBundle?.both?.withDebugBox()
+                markerIcon = imageBundle?.both
             case .visibleIcon:
-                markerIcon = imageBundle?.icon?.withDebugBox()
+                markerIcon = imageBundle?.icon
             case .visibleLabel:
-                markerIcon = imageBundle?.label?.withDebugBox()
+                markerIcon = imageBundle?.label
             case .undefined, .invisible:
                 break
             }
@@ -913,7 +914,7 @@ final class IconLabelBundle: Sendable {
 
         // Early return if neither are set
         guard let icon, let label else {
-            return icon?.withDebugBox() ?? label?.withDebugBox()
+            return icon ?? label
         }
 
         let box: CGRect
@@ -946,7 +947,7 @@ final class IconLabelBundle: Sendable {
                 icon.draw(at: CGPoint(x: 0, y: (box.height - icon.size.height) / 2))
                 label.draw(at: CGPoint(x: icon.size.width + respectDistance, y: (box.height - label.size.height) / 2))
             }
-        }.withDebugBox()
+        }
     }
 }
 
@@ -1218,50 +1219,6 @@ extension UIImage {
         let height = size.height
         guard width.isFinite, height.isFinite, width > 0, height > 0 else { return false }
         return cgImage != nil || ciImage != nil
-    }
-
-    fileprivate func withDebugBox(color _: UIColor = .red) -> UIImage {
-        guard ViewState.debugDrawImageBorder == true else { return self }
-        let size = CGSize(width: size.width, height: size.height)
-        guard size != .zero else { return self }
-        let format = UIGraphicsImageRendererFormat.preferred()
-        format.opaque = false
-        let renderer = UIGraphicsImageRenderer(size: size, format: format)
-        let img = renderer.image { ctx in
-            draw(at: CGPoint(x: 0, y: 0))
-            let rectangle = CGRect(x: 0, y: 0, width: size.width, height: size.height)
-            UIColor.red.setStroke()
-            ctx.stroke(rectangle)
-        }
-        return img
-    }
-
-    fileprivate func resizeImage(scaleSize: CGFloat) -> UIImage? {
-        var size = size
-
-        guard self.size.width <= scaleSize, self.size.height <= scaleSize else {
-            return self
-        }
-
-        let scaleFactor = scaleSize / max(size.width, size.height)
-        size.width *= scaleFactor
-        size.height *= scaleFactor
-
-        let rendererFormat = UIGraphicsImageRendererFormat.preferred()
-        rendererFormat.opaque = false
-        let renderer = UIGraphicsImageRenderer(size: size, format: rendererFormat)
-
-        return renderer.image { _ in
-            draw(in: CGRect(origin: CGPoint.zero, size: size))
-        }
-    }
-
-    private func fillColor(_ color: UIColor) -> UIImage {
-        UIGraphicsImageRenderer(size: size).image { context in
-            color.setFill()
-            context.fill(context.format.bounds)
-            draw(in: context.format.bounds, blendMode: .destinationIn, alpha: 1.0)
-        }
     }
 }
 

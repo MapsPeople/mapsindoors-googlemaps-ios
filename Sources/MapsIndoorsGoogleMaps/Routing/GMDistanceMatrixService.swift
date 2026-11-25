@@ -15,13 +15,8 @@ class GMDistanceMatrixService: MPExternalDistanceMatrixService {
 
     var language = "en"
 
-    var units: GoogleRoutingUnits = .metric
-
     var travelMode: GoogleTravelModes = .driving
-    var transitMode: GoogleTransitModes = .bus
     var avoids = [GoogleAvoids]()
-    var trafficModel: GoogleTrafficModels = .bestGuess
-    var routingPreference: GoogleRoutingPreference = .lessWalking
 
     required init(apiKey: String) {
         self.apiKey = apiKey
@@ -66,7 +61,8 @@ class GMDistanceMatrixService: MPExternalDistanceMatrixService {
         buildUrl(origins: origins, destinations: destinations, config: config)
     }
 
-    private func buildUrl(origins: [CLLocationCoordinate2D], destinations: [CLLocationCoordinate2D], config: MPDirectionsConfig) -> URL {
+    /// The legacy Distance Matrix request URL. Internal for tests.
+    func buildUrl(origins: [CLLocationCoordinate2D], destinations: [CLLocationCoordinate2D], config: MPDirectionsConfig) -> URL {
         applyConfig(config: config)
 
         var components = URLComponents(string: baseUrl)!
@@ -88,12 +84,7 @@ class GMDistanceMatrixService: MPExternalDistanceMatrixService {
 
         queryItems.append(URLQueryItem(name: "language", value: config.language ?? language))
 
-        switch units {
-        case .metric:
-            queryItems.append(URLQueryItem(name: "units", value: "metric"))
-        case .imperial:
-            queryItems.append(URLQueryItem(name: "units", value: "imperial"))
-        }
+        queryItems.append(URLQueryItem(name: "units", value: "metric"))
 
         if let arrivalTime = config.arrival {
             queryItems.append(URLQueryItem(name: "arrival_time", value: String(Int(arrivalTime.timeIntervalSince1970) + 10)))
@@ -112,18 +103,7 @@ class GMDistanceMatrixService: MPExternalDistanceMatrixService {
             queryItems.append(URLQueryItem(name: "mode", value: "bicycling"))
         case .transit:
             queryItems.append(URLQueryItem(name: "mode", value: "transit"))
-            switch transitMode {
-            case .bus:
-                queryItems.append(URLQueryItem(name: "transit_mode", value: "bus"))
-            case .subway:
-                queryItems.append(URLQueryItem(name: "transit_mode", value: "subway"))
-            case .train:
-                queryItems.append(URLQueryItem(name: "transit_mode", value: "train"))
-            case .tram:
-                queryItems.append(URLQueryItem(name: "transit_mode", value: "tram"))
-            case .rail:
-                queryItems.append(URLQueryItem(name: "transit_mode", value: "rail"))
-            }
+            queryItems.append(URLQueryItem(name: "transit_mode", value: "bus"))
         }
 
         if avoids.isEmpty == false {
@@ -140,21 +120,8 @@ class GMDistanceMatrixService: MPExternalDistanceMatrixService {
             queryItems.append(URLQueryItem(name: "avoid", value: names.joined(separator: "|")))
         }
 
-        switch trafficModel {
-        case .bestGuess:
-            queryItems.append(URLQueryItem(name: "traffic_model", value: "best_guess"))
-        case .pessimistic:
-            queryItems.append(URLQueryItem(name: "traffic_model", value: "pessimistic"))
-        case .optimistic:
-            queryItems.append(URLQueryItem(name: "traffic_model", value: "optimistic"))
-        }
-
-        switch routingPreference {
-        case .lessWalking:
-            queryItems.append(URLQueryItem(name: "transit_routing_preference", value: "less_walking"))
-        case .fewerTransfers:
-            queryItems.append(URLQueryItem(name: "transit_routing_preference", value: "fewer_transfers"))
-        }
+        queryItems.append(URLQueryItem(name: "traffic_model", value: "best_guess"))
+        queryItems.append(URLQueryItem(name: "transit_routing_preference", value: "less_walking"))
 
         queryItems.append(URLQueryItem(name: "key", value: apiKey))
 

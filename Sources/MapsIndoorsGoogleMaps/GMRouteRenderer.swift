@@ -28,6 +28,10 @@ final class GMRouteRenderer: MPRouteRenderer {
     private var polyline: GMSPolyline?
     /// Internal (read-only) so tests can check what `apply` and `clear` leave on the map.
     private(set) var basePolyline: GMSPolyline?
+    /// Test instrumentation: how many `apply` calls have finished their off-main geometry work and come back to the
+    /// main actor, whether they then drew the route or found themselves superseded. Read-only; it is the positive
+    /// signal a test waits on before asserting that a superseded apply drew nothing.
+    private(set) var settledApplyCount = 0
     private var stampPolyline: GMSPolyline?  // arrow preset: a rotating sprite stamped along the line
     private var stampMarkers = [GMSMarker]()  // custom preset: flat markers along the line, rotated to the line bearing
 
@@ -67,6 +71,10 @@ final class GMRouteRenderer: MPRouteRenderer {
     nonisolated required init(map: GMSMapView?) {
         self.map = map
     }
+
+    /// `MPMapControl.cameraLimits`, written by the provider whenever they change. A fixed bearing or tilt
+    /// in them is the one the route camera fits for (SPEX-457).
+    var cameraLimits: MPCameraLimits?
 
     // MARK: - Values that cross the hop
 
@@ -171,7 +179,9 @@ final class GMRouteRenderer: MPRouteRenderer {
         Task { [weak self] in
             // Off the main actor: building and (optionally) smoothing the path is CPU work.
             let route = await Self.preparedRoute(coordinates, smoothing: pathSmoothing)
-            guard let self, generation == self.animationGeneration else { return }
+            guard let self else { return }
+            defer { self.settledApplyCount += 1 }
+            guard generation == self.animationGeneration else { return }
             self.commit(route: route, snapshot: snapshot, style: style, animate: animate, duration: duration, generation: generation)
         }
     }
@@ -403,20 +413,13 @@ final class GMRouteRenderer: MPRouteRenderer {
     private func moveCameraOnMain(points path: [CLLocationCoordinate2D], animate: Bool, tilt: Float, fitMode: MPCameraViewFitMode, padding: UIEdgeInsets, maxZoom: Double?) {
         guard let map, path.count >= 2 else { return }
 
-        let bearing: CLLocationDirection
-        let viewingAngle: Float
-        switch fitMode {
-        case .northAligned:
-            (bearing, viewingAngle) = (0, 0)
-        case .firstStepAligned:
-            (bearing, viewingAngle) = (MPGeometryUtils.bearingBetweenPoints(from: path[0], to: path[1]), tilt)
-        case .startToEndAligned:
-            (bearing, viewingAngle) = (MPGeometryUtils.bearingBetweenPoints(from: path[0], to: path.last!), tilt)
-        case .none:
-            return
-        default:
-            return
-        }
+        // A fixed bearing or tilt wins over the fit mode's, so the zoom fits the route as it will be seen.
+        guard
+            let angles = MPRouteCameraFit.angles(
+                fitMode: fitMode, path: path, tilt: Double(tilt), limits: cameraLimits, maxTilt: GoogleMapProvider.maxViewingAngle)
+        else { return }
+        let bearing = angles.bearing
+        let viewingAngle = Float(angles.tilt)
 
         // The map's own padding (`MPMapControl.mapPadding` lives on `GMSMapView.padding`) is not in `padding`. Once
         // the map is on screen, Google already shows the camera target at the centre of the area that padding
@@ -426,31 +429,11 @@ final class GMRouteRenderer: MPRouteRenderer {
         let lowest = Double(map.minZoom)
         let highest = max(lowest, maxZoom.map { min($0, Double(map.maxZoom)) } ?? Double(map.maxZoom))
         let fit = Self.fit(
-            path: path, heading: bearing, insets: padding, viewportInsets: Self.viewportInsets(of: map), tilt: viewingAngle, zoomRange: lowest...highest,
-            in: map.bounds.size)
+            path: path, heading: bearing, insets: padding, viewportInsets: GoogleMapProvider.viewportInsets(of: map), tilt: viewingAngle,
+            zoomRange: lowest...highest, in: map.bounds.size)
         let pos = createCameraPosition(for: fit.target, zoom: fit.zoom, bearing: bearing, tilt: viewingAngle)
         // The camera move itself stays one hop later than the fit computation, as it always was.
         Task { @MainActor in Self.move(map, to: pos, animate: animate) }
-    }
-
-    /// The part of the map Google draws into, as insets from the view's edges: `GMSMapView.padding` with the safe
-    /// area that `paddingAdjustmentBehavior` adds to it (`.always` by default), the way Google lays the map out.
-    private static func viewportInsets(of map: GMSMapView) -> UIEdgeInsets {
-        let (padding, safeArea) = (map.padding, map.safeAreaInsets)
-        switch map.paddingAdjustmentBehavior {
-        case .always:
-            return UIEdgeInsets(
-                top: padding.top + safeArea.top, left: padding.left + safeArea.left, bottom: padding.bottom + safeArea.bottom,
-                right: padding.right + safeArea.right)
-        case .automatic:
-            return UIEdgeInsets(
-                top: max(padding.top, safeArea.top), left: max(padding.left, safeArea.left), bottom: max(padding.bottom, safeArea.bottom),
-                right: max(padding.right, safeArea.right))
-        case .never:
-            return padding
-        @unknown default:
-            return padding
-        }
     }
 
     /// `animate` is decided by the directions renderer (host flag plus Reduce Motion, SPEX-2060); the instant
@@ -581,7 +564,8 @@ final class GMRouteRenderer: MPRouteRenderer {
         views.removeAll()
     }
 
-    private func applyStrokeStyle(_ style: MPStrokeStyle, to polyline: GMSPolyline?, color: UIColor, path: GMSPath) {
+    /// Internal for tests.
+    func applyStrokeStyle(_ style: MPStrokeStyle, to polyline: GMSPolyline?, color: UIColor, path: GMSPath) {
         guard let polyline else { return }
         switch style {
         case .solid:
@@ -704,10 +688,6 @@ final class GMRouteRenderer: MPRouteRenderer {
             s.marker.value?.zIndex = type == .start ? Int32(MapOverlayZIndex.startMarkerOverlay.rawValue) : Int32(MapOverlayZIndex.endMarkerOverlay.rawValue)
             views.append(s)
         }
-    }
-
-    private func createCameraUpdate(for bounds: GMSCoordinateBounds, with insets: UIEdgeInsets) -> GMSCameraUpdate {
-        GMSCameraUpdate.fit(bounds, with: insets)
     }
 
     private func createCameraPosition(for target: CLLocationCoordinate2D, zoom: Float, bearing: Double, tilt: Float) -> GMSCameraPosition {

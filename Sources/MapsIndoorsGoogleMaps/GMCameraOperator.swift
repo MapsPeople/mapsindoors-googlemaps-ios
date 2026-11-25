@@ -38,7 +38,7 @@ class GMCameraOperator: MPCameraOperator {
                 longitude: target.longitude,
                 zoom: zoom
             )
-            self.map?.moveCamera(GMSCameraUpdate.setCamera(position))
+            self.map?.moveCamera(GMSCameraUpdate.setCamera(self.withinLimits(position)))
         }
     }
 
@@ -57,13 +57,13 @@ class GMCameraOperator: MPCameraOperator {
                 bearing: bearing,
                 viewingAngle: viewingAngle
             )
-            self.apply(GMSCameraUpdate.setCamera(position))
+            self.apply(GMSCameraUpdate.setCamera(self.withinLimits(position)))
         }
     }
 
     func move(bounds: MPGeoBounds) {
         let b = GMSCoordinateBounds(coordinate: bounds.northEast, coordinate: bounds.southWest)
-        map?.moveCamera(GMSCameraUpdate.fit(b))
+        (cameraDriverOverride ?? map)?.moveCamera(fit(b))
     }
 
     func animate(bounds: MPGeoBounds) {
@@ -71,8 +71,14 @@ class GMCameraOperator: MPCameraOperator {
         let southWest = bounds.southWest
         Task { @MainActor in
             let b = GMSCoordinateBounds(coordinate: northEast, coordinate: southWest)
-            self.apply(GMSCameraUpdate.fit(b))
+            self.apply(self.fit(b))
         }
+    }
+
+    /// A fit to `bounds`, worked out for `MPMapControl.cameraLimits`' fixed bearing when they set one (see
+    /// `GoogleMapProvider.fitUpdate(for:)`).
+    private func fit(_ bounds: GMSCoordinateBounds) -> GMSCameraUpdate {
+        (mapProvider as? GoogleMapProvider)?.fitUpdate(for: bounds) ?? GMSCameraUpdate.fit(bounds)
     }
 
     func animate(target: CLLocationCoordinate2D, zoom: Float?) {
@@ -82,8 +88,15 @@ class GMCameraOperator: MPCameraOperator {
                 longitude: target.longitude,
                 zoom: zoom ?? self.position.zoom
             )
-            self.apply(GMSCameraUpdate.setCamera(position))
+            self.apply(GMSCameraUpdate.setCamera(self.withinLimits(position)))
         }
+    }
+
+    /// `position` kept inside `MPMapControl.cameraLimits`, so a move the SDK makes to a position never
+    /// leaves them on the way. A fit to bounds lands where the engine decides, so the provider corrects
+    /// that once the camera is idle instead.
+    private func withinLimits(_ position: GMSCameraPosition) -> GMSCameraPosition {
+        (mapProvider as? GoogleMapProvider)?.cameraWithinLimits(position) ?? position
     }
 
     /// Animates `update` unless motion is not allowed for this map (host flag or Reduce Motion, see

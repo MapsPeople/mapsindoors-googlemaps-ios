@@ -1,7 +1,7 @@
 import Foundation
 @preconcurrency import GoogleMaps
 @_spi(Private) import MapsIndoors
-import MapsIndoorsCore
+@_spi(Private) import MapsIndoorsCore
 
 /// `@MainActor`: Google Maps delivers every `GMSMapViewDelegate` callback on the main thread, and the class
 /// forwards to a host delegate and mutates the map view. Isolating it says so once instead of per callback.
@@ -74,6 +74,10 @@ class GoogleMapViewDelegate: NSObject, @preconcurrency GMSMapViewDelegate {
         if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapView(_:idleAt:))) {
             originalMapViewDelegate.mapView?(mapView, idleAt: position)
         }
+        // Whatever just moved the camera may have taken it out of `MPMapControl.cameraLimits`, so put it
+        // back now that the move has ended. Google Maps delivers its delegate callbacks on the main
+        // thread, but the protocol carries no isolation.
+        MainActor.assumeIsolated { map?.reapplyCameraLimits() }
         mapsIndoorsDelegate?.cameraIdle()
     }
 
@@ -267,6 +271,7 @@ class GoogleMapViewDelegate: NSObject, @preconcurrency GMSMapViewDelegate {
         if let originalMapViewDelegate, originalMapViewDelegate.responds(to: #selector(GMSMapViewDelegate.mapViewSnapshotReady(_:))) {
             originalMapViewDelegate.mapViewSnapshotReady?(mapView)
         }
+        MPRenderSignposts.providerDidSettle()
         mapsIndoorsDelegate?.cameraSnapshot()
     }
 
